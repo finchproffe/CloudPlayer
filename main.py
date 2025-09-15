@@ -11,6 +11,7 @@ import yt_dlp
 ROOT_PATH = "C:/PlayerRelease"
 DOWNLOADS_PATH = f"{ROOT_PATH}/downloads"
 PLAYLISTS_PATH = f"{ROOT_PATH}/playlists"
+FFMPEG_PATH = "./ffmpeg.exe"
 
 DOCS_PATH = str(Path.home() / "Documents" / "CloudPlayer")
 DOWNLOADS_PATH = str(Path(DOCS_PATH) / "downloads")
@@ -75,11 +76,45 @@ class PlayerControls(QWidget):
             }
         """)
         
+        self.delete_btn = QPushButton("DELETE")
+        self.delete_btn.setFixedSize(80, 40)
+        self.delete_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #ff4444, stop:1 #cc0000);
+                border: none;
+                border-radius: 20px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #ff6666, stop:1 #ff4444);
+            }
+        """)
+        
+        self.rename_btn = QPushButton("RENAME")
+        self.rename_btn.setFixedSize(80, 40)
+        self.rename_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1db954;
+                border: none;
+                border-radius: 20px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #1ed760;
+            }
+        """)
+        
         controls_layout.addStretch()
         controls_layout.addWidget(self.prev_btn)
         controls_layout.addWidget(self.play_btn)
         controls_layout.addWidget(self.next_btn)
         controls_layout.addWidget(self.duplicate_btn)
+        controls_layout.addWidget(self.delete_btn)
+        controls_layout.addWidget(self.rename_btn)
         controls_layout.addStretch()
         
         layout.addLayout(time_layout)
@@ -101,56 +136,147 @@ class AddSongDialog(QDialog):
         
     def setup_ui(self):
         self.setWindowTitle("Add Song")
-        self.setMinimumWidth(400)
+        self.setMinimumWidth(500)
         layout = QVBoxLayout(self)
         
-        url_btn = QPushButton("Add from URL (Spotify/SoundCloud)")
+        # Search controls
+        search_layout = QHBoxLayout()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search song...")
+        
+        search_soundcloud_btn = QPushButton("Search SoundCloud")
+        search_youtube_btn = QPushButton("Search YouTube")
+        
+        search_layout.addWidget(self.search_input)
+        search_layout.addWidget(search_soundcloud_btn)
+        search_layout.addWidget(search_youtube_btn)
+        
+        self.results_list = QListWidget()
+        self.results_list.setMinimumHeight(300)
+        self.results_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)  # Enable multi-select
+        
+        url_btn = QPushButton("Add from URL")
         file_btn = QPushButton("Add from File")
         
         for btn in [url_btn, file_btn]:
             btn.setFixedHeight(50)
-            layout.addWidget(btn)
             
+        layout.addLayout(search_layout)
+        layout.addWidget(self.results_list)
+        layout.addWidget(url_btn)
+        layout.addWidget(file_btn)
+        
         url_btn.clicked.connect(self.add_from_url)
         file_btn.clicked.connect(self.add_from_file)
+        search_soundcloud_btn.clicked.connect(lambda: self.search_songs('scsearch'))
+        search_youtube_btn.clicked.connect(lambda: self.search_songs('ytsearch'))
+        self.results_list.itemDoubleClicked.connect(self.download_selected)
         
-    def add_from_url(self):
-        url, ok = QInputDialog.getText(self, "Add from URL", "Enter Spotify/SoundCloud URL:")
-        if ok and url:
+    def search_songs(self, platform='scsearch'):
+        query = self.search_input.text()
+        if query:
             try:
-                os.makedirs(self.playlist_path, exist_ok=True)
                 ydl_opts = {
-                    'format': 'bestaudio/best',
-                    'outtmpl': f'{self.playlist_path}/%(title)s.%(ext)s',
+                    'quiet': True,
+                    'no_warnings': True,
+                    'extract_flat': True,
+                    'ffmpeg_location': FFMPEG_PATH,
                 }
                 
-                progress = QProgressDialog("Downloading...", None, 0, 0, self)
-                progress.setWindowModality(Qt.WindowModal)
-                progress.show()
-                
-                try:
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        ydl.download([url])
-                    self.accept()
-                except Exception as e:
-                    QMessageBox.critical(self, "Error", f"Failed to download: {str(e)}")
-                finally:
-                    progress.close()
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    # Search for songs first
+                    results = ydl.extract_info(f"{platform}10:song {query}", download=False)
+                    
+                    self.results_list.clear()
+                    if results and 'entries' in results:
+                        for entry in results['entries']:
+                            title = entry.get('title', 'Unknown')
+                            uploader = entry.get('uploader', 'Unknown')
+                            duration = entry.get('duration_string', '')
+                            item = QListWidgetItem(f"🎵 {title} - {uploader} ({duration})")
+                            item.setData(Qt.UserRole, entry['url'])
+                            self.results_list.addItem(item)
+                    
+                    # Then search for artists
+                    results = ydl.extract_info(f"{platform}5:artist {query}", download=False)
+                    if results and 'entries' in results:
+                        for entry in results['entries']:
+                            title = entry.get('title', 'Unknown')
+                            uploader = entry.get('uploader', 'Unknown')
+                            duration = entry.get('duration_string', '')
+                            item = QListWidgetItem(f"👤 {title} - {uploader} ({duration})")
+                            item.setData(Qt.UserRole, entry['url'])
+                            self.results_list.addItem(item)
                     
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Download error: {str(e)}")
-
-    def add_from_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Audio File", "", "Audio Files (*.mp3 *.wav *.ogg *.m4a)"
-        )
-        if file_path:
-            os.makedirs(self.playlist_path, exist_ok=True)
-            filename = Path(file_path).name
-            new_path = f"{self.playlist_path}/{filename}"
-            import shutil
-            shutil.copy2(file_path, new_path)
+                QMessageBox.critical(self, "Error", f"Search error: {str(e)}")
+                
+    def download_selected(self):
+        selected_items = self.results_list.selectedItems()
+        total = len(selected_items)
+        
+        if total > 0:
+            progress = QProgressDialog("Downloading songs...", "Cancel", 0, total, self)
+            progress.setWindowModality(Qt.WindowModal)
+            progress.show()
+            
+            for i, item in enumerate(selected_items):
+                url = item.data(Qt.UserRole)
+                if url:
+                    progress.setValue(i)
+                    progress.setLabelText(f"Downloading {i+1}/{total}: {item.text()}")
+                    if progress.wasCanceled():
+                        break
+                    self.download_song(url)
+            
+            progress.setValue(total)
             self.accept()
+
+    def download_song(self, url):
+        try:
+            os.makedirs(self.playlist_path, exist_ok=True)
+            progress = QProgressDialog("Downloading...", None, 0, 0, self)
+            progress.setWindowModality(Qt.WindowModal)
+            progress.show()
+
+            ydl_opts = {
+                'format': 'bestaudio/best',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '320',
+                }],
+                'outtmpl': f'{self.playlist_path}/%(title)s.%(ext)s',
+                'quiet': True,
+                'no_warnings': True,
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                progress.setLabelText(f"Downloading: {info.get('title', 'Unknown')}")
+                ydl.download([url])
+            self.accept()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Download error: {str(e)}")
+        finally:
+            progress.close()
+
+    def add_from_url(self):
+        url, ok = QInputDialog.getText(self, "Add from URL", "Enter URL:")
+        if ok and url:
+            self.download_song(url)
+            
+    def add_from_file(self):
+        file_dialog = QFileDialog(self)
+        file_dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
+        file_dialog.setNameFilter("Audio Files (*.mp3 *.wav *.ogg *.flac);;All Files (*)")
+        file_dialog.setViewMode(QFileDialog.ViewMode.List)
+        
+        if file_dialog.exec():
+            selected_files = file_dialog.selectedFiles()
+            for file in selected_files:
+                self.download_song(file)
 
 class PlaylistView(QWidget):
     def __init__(self, parent=None):
@@ -160,7 +286,7 @@ class PlaylistView(QWidget):
         self.songs = []
         self.current_track_index = -1
         self.setup_ui()
-        self.update_songs_list()  # Load songs immediately after UI setup
+        self.update_songs_list()
         
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -172,16 +298,25 @@ class PlaylistView(QWidget):
         self.playlist_name = QLabel("Playlist Name")
         
         volume_layout = QHBoxLayout()
-        volume_icon = QPushButton()
-        volume_icon.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaVolume))
-        volume_icon.setFixedSize(24, 24)
-        volume_icon.setFlat(True)
+        
+        # Now playing label to the left of volume controls
+        self.now_playing = QLabel("Now Playing - None")
+        self.now_playing.setStyleSheet("color: #b3b3b3; font-size: 12px;")
+        
+        self.volume_btn = QPushButton()
+        self.volume_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaVolume))
+        self.volume_btn.setFixedSize(24, 24)
+        self.volume_btn.setFlat(True)
+        self.volume_btn.clicked.connect(self.toggle_mute)
+        
         self.volume_slider = QSlider(Qt.Horizontal)
         self.volume_slider.setFixedWidth(100)
         self.volume_slider.setRange(0, 100)
         self.volume_slider.setValue(50)
         
-        volume_layout.addWidget(volume_icon)
+        volume_layout.addWidget(self.now_playing)
+        volume_layout.addStretch()
+        volume_layout.addWidget(self.volume_btn)
         volume_layout.addWidget(self.volume_slider)
         
         header_layout.addWidget(self.back_btn)
@@ -212,12 +347,15 @@ class PlaylistView(QWidget):
         self.player.positionChanged.connect(self.update_position)
         self.player.durationChanged.connect(self.update_duration)
         
-        # Connect next/prev buttons
         self.player_controls.next_btn.clicked.connect(self.play_next_track)
         self.player_controls.prev_btn.clicked.connect(self.play_prev_track)
         
         self.player_controls.duplicate_btn.clicked.connect(self.duplicate_current_track)
+        self.player_controls.delete_btn.clicked.connect(self.delete_current_track)
         self.player.mediaStatusChanged.connect(self.on_media_status_changed)
+        
+        # Подключаем кнопку rename из player_controls
+        self.player_controls.rename_btn.clicked.connect(self.rename_current_track)
         
     def update_position(self, position):
         self.player_controls.current_time.setText(self.format_time(position))
@@ -241,14 +379,50 @@ class PlaylistView(QWidget):
     def seek_position(self, position):
         self.player.setPosition(position)
     
+    def toggle_mute(self):
+        if self.audio_output.isMuted():
+            self.audio_output.setMuted(False)
+            self.volume_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaVolume))
+        else:
+            self.audio_output.setMuted(True)
+            self.volume_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaVolumeMuted))
+    
     def duplicate_current_track(self):
         current_item = self.songs_list.currentItem()
         if current_item:
-            filename = current_item.text().split('. ', 1)[1]
+            original_name = current_item.text().split('. ', 1)[1]
+            base_name, ext = os.path.splitext(original_name)
+            
+            counter = 1
+            while True:
+                new_name = f"{base_name} ({counter}){ext}"
+                if not os.path.exists(os.path.join(self.current_playlist_path, new_name)):
+                    break
+                counter += 1
+            
+            src_path = os.path.join(self.current_playlist_path, original_name)
+            dst_path = os.path.join(self.current_playlist_path, new_name)
+            import shutil
+            shutil.copy2(src_path, dst_path)
+            
             new_index = self.songs_list.count() + 1
-            new_item = QListWidgetItem(f"{new_index}. {filename}")
+            new_item = QListWidgetItem(f"{new_index}. {new_name}")
             self.songs_list.addItem(new_item)
             self.save_playlist()
+
+    def delete_current_track(self):
+        current_item = self.songs_list.currentItem()
+        if current_item:
+            filename = current_item.text().split('. ', 1)[1]
+            file_path = os.path.join(self.current_playlist_path, filename)
+            
+            try:
+                os.remove(file_path)
+                self.songs_list.takeItem(self.songs_list.row(current_item))
+                self.save_playlist()
+                self.update_songs_list()
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Could not delete file: {str(e)}")
 
     def play_song(self, item):
         try:
@@ -257,9 +431,40 @@ class PlaylistView(QWidget):
             self.player.setSource(QUrl.fromLocalFile(file_path))
             self.player.play()
             self.player_controls.play_btn.setText("PAUSE")
+            self.now_playing.setText(f"Now Playing - {item.text().split('. ', 1)[1]}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Cannot play file: {str(e)}")
     
+    def rename_current_track(self):
+        current_item = self.songs_list.currentItem()
+        if current_item:
+            old_name = current_item.text().split('. ', 1)[1]
+            old_path = os.path.join(self.current_playlist_path, old_name)
+            
+            new_name, ok = QInputDialog.getText(self, "Rename Track", "Enter new name:", text=old_name)
+            if ok and new_name:
+                try:
+                    # Keep extension
+                    _, ext = os.path.splitext(old_name)
+                    if not new_name.endswith(ext):
+                        new_name += ext
+                        
+                    new_path = os.path.join(self.current_playlist_path, new_name)
+                    os.rename(old_path, new_path)
+                    
+                    # Update list item
+                    index = self.songs_list.row(current_item) + 1
+                    current_item.setText(f"{index}. {new_name}")
+                    
+                    # Update now playing if this is the current track
+                    if self.current_track_index == self.songs_list.row(current_item):
+                        self.now_playing.setText(f"Now Playing - {new_name}")
+                        
+                    self.save_playlist()
+                    
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Could not rename file: {str(e)}")
+
     def on_media_status_changed(self, status):
         if status == QMediaPlayer.MediaStatus.EndOfMedia:
             self.play_next_track()
@@ -270,7 +475,7 @@ class PlaylistView(QWidget):
             if next_item:
                 self.songs_list.setCurrentItem(next_item)
                 self.play_song(next_item)
-        elif self.songs_list.count() > 0:  # Loop to beginning
+        elif self.songs_list.count() > 0:
             first_item = self.songs_list.item(0)
             self.songs_list.setCurrentItem(first_item)
             self.play_song(first_item)
@@ -281,7 +486,7 @@ class PlaylistView(QWidget):
             if prev_item:
                 self.songs_list.setCurrentItem(prev_item)
                 self.play_song(prev_item)
-        elif self.songs_list.count() > 0:  # Loop to end
+        elif self.songs_list.count() > 0:
             last_item = self.songs_list.item(self.songs_list.count() - 1)
             self.songs_list.setCurrentItem(last_item)
             self.play_song(last_item)
@@ -340,7 +545,7 @@ class MusicPlayer(QMainWindow):
         QFontDatabase.addApplicationFont("./Montserrat-Bold.ttf")
         
         self.setup_ui()
-        self.load_playlists()  # Load playlists at startup
+        self.load_playlists()
 
     def setup_ui(self):
         self.stack = QStackedWidget()
@@ -445,9 +650,20 @@ class MusicPlayer(QMainWindow):
     def create_playlist(self):
         name, ok = QInputDialog.getText(self, "New Playlist", "Enter playlist name:")
         if ok and name:
+            # Add to list widget
             self.playlist_list.addItem(name)
+            
+            # Create directory structure
             playlist_path = f"{PLAYLISTS_PATH}/{name}"
             os.makedirs(f"{playlist_path}/songs", exist_ok=True)
+            
+            # Create initial JSON file
+            playlist_data = {
+                'name': name,
+                'songs': []
+            }
+            with open(f"{PLAYLISTS_PATH}/{name}.json", 'w') as f:
+                json.dump(playlist_data, f)
     
     def load_playlists(self):
         if os.path.exists(PLAYLISTS_PATH):
@@ -486,3 +702,4 @@ if __name__ == "__main__":
     player = MusicPlayer()
     player.show()
     sys.exit(app.exec())
+sys.exit(app.exec())
