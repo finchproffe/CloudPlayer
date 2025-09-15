@@ -1,1 +1,2 @@
-Hello! Install all fonts and use ffmpeg.exe (in repo)
+Hello! Install all fonts and copy ffmpeg.exe to folder with fonts, py file (in repo)
+FinchProffe2025
