@@ -7,6 +7,7 @@ import sys
 import os
 import json
 import yt_dlp
+import urllib.request
 
 ROOT_PATH = "C:/PlayerRelease"
 DOWNLOADS_PATH = f"{ROOT_PATH}/downloads"
@@ -15,6 +16,52 @@ FFMPEG_PATH = "./ffmpeg.exe"
 
 DOCS_PATH = str(Path.home() / "Documents" / "CloudPlayer")
 DOWNLOADS_PATH = str(Path(DOCS_PATH) / "downloads")
+
+THEME_COLOR = "#1a1b26"  
+BUTTON_COLOR = "#2E3440"
+BUTTON_HOVER = "#3B4252"
+ACCENT_COLOR = "#0A84FF"
+LIST_BG = "#1E1E2E"
+ITEM_BG = "#24283B"
+
+class ConnectionStatus(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        
+        self.status_icon = QLabel()
+        self.status_text = QLabel("Offline")
+        self.net_icon = QLabel()
+        
+        self.status_icon.setFixedSize(12, 12)
+        self.net_icon.setFixedSize(16, 16)
+        
+        self.net_icon.setPixmap(QPixmap("./icons/wifi.png").scaled(16, 16))
+        self.update_status()
+        
+        layout.addWidget(self.status_icon)
+        layout.addWidget(self.status_text)
+        layout.addWidget(self.net_icon)
+        layout.addStretch()
+        
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_status)
+        self.timer.start(5000)
+        
+    def update_status(self):
+        try:
+            urllib.request.urlopen('http://google.com', timeout=1)
+            self.status_icon.setStyleSheet("""
+                background-color: #50fa7b;
+                border-radius: 6px;
+            """)
+            self.status_text.setText("Online")
+        except:
+            self.status_icon.setStyleSheet("""
+                background-color: #ff5555;
+                border-radius: 6px;
+            """)
+            self.status_text.setText("Offline")
 
 class PlayerControls(QWidget):
     def __init__(self, parent=None):
@@ -40,74 +87,55 @@ class PlayerControls(QWidget):
         controls_layout = QHBoxLayout()
         controls_layout.setSpacing(20)
         
-        self.prev_btn = QPushButton("PREV")
-        self.play_btn = QPushButton("PLAY")
-        self.next_btn = QPushButton("NEXT")
+        self.prev_btn = QPushButton()
+        self.play_btn = QPushButton()
+        self.next_btn = QPushButton()
+        self.duplicate_btn = QPushButton()
+        self.delete_btn = QPushButton()
+        self.rename_btn = QPushButton()
+
+        self.prev_btn.setIcon(QIcon("./icons/prev.png"))
+        self.play_btn.setIcon(QIcon("./icons/play.png"))
+        self.next_btn.setIcon(QIcon("./icons/next.png"))
+        self.duplicate_btn.setIcon(QIcon("./icons/copy.png"))
+        self.delete_btn.setIcon(QIcon("./icons/delete.png"))
+        self.rename_btn.setIcon(QIcon("./icons/rename.png"))
         
-        for btn in [self.prev_btn, self.play_btn, self.next_btn]:
-            btn.setFixedSize(80, 40)
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #1db954;
-                    border: none;
-                    border-radius: 20px;
-                    font-weight: bold;
-                    font-size: 12px;
-                }
-                QPushButton:hover {
-                    background-color: #1ed760;
-                }
-            """)
-            
-        self.duplicate_btn = QPushButton("DUPLICATE")
-        self.duplicate_btn.setFixedSize(100, 40)
-        self.duplicate_btn.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #1db954, stop:1 #147d37);
+        self.prev_btn.setText("  PREV")
+        self.play_btn.setText("  PLAY")
+        self.next_btn.setText("  NEXT")
+        self.duplicate_btn.setText("  DUPLICATE")
+        self.delete_btn.setText("  DELETE")
+        self.rename_btn.setText("  RENAME")
+
+        button_style = f"""
+            QPushButton {{
+                background-color: {BUTTON_COLOR};
                 border: none;
                 border-radius: 20px;
                 font-weight: bold;
                 font-size: 12px;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #1ed760, stop:1 #1db954);
-            }
-        """)
+                padding: 10px 15px;
+                text-align: left;
+                padding-left: 15px;
+            }}
+            QPushButton:hover {{
+                background-color: {BUTTON_HOVER};
+            }}
+        """
         
-        self.delete_btn = QPushButton("DELETE")
-        self.delete_btn.setFixedSize(80, 40)
-        self.delete_btn.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #ff4444, stop:1 #cc0000);
-                border: none;
-                border-radius: 20px;
-                font-weight: bold;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #ff6666, stop:1 #ff4444);
-            }
-        """)
-        
-        self.rename_btn = QPushButton("RENAME")
-        self.rename_btn.setFixedSize(80, 40)
-        self.rename_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1db954;
-                border: none;
-                border-radius: 20px;
-                font-weight: bold;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #1ed760;
-            }
-        """)
-        
+        self.prev_btn.setFixedSize(110, 40)
+        self.play_btn.setFixedSize(110, 40)
+        self.next_btn.setFixedSize(110, 40)
+        self.duplicate_btn.setFixedSize(130, 40)
+        self.delete_btn.setFixedSize(110, 40)
+        self.rename_btn.setFixedSize(110, 40)
+
+        for btn in [self.prev_btn, self.play_btn, self.next_btn, 
+                   self.duplicate_btn, self.delete_btn, self.rename_btn]:
+            btn.setStyleSheet(button_style)
+            btn.setIconSize(QSize(16, 16))
+
         controls_layout.addStretch()
         controls_layout.addWidget(self.prev_btn)
         controls_layout.addWidget(self.play_btn)
@@ -139,7 +167,6 @@ class AddSongDialog(QDialog):
         self.setMinimumWidth(500)
         layout = QVBoxLayout(self)
         
-        # Search controls
         search_layout = QHBoxLayout()
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search song...")
@@ -153,7 +180,7 @@ class AddSongDialog(QDialog):
         
         self.results_list = QListWidget()
         self.results_list.setMinimumHeight(300)
-        self.results_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)  # Enable multi-select
+        self.results_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         
         url_btn = QPushButton("Add from URL")
         file_btn = QPushButton("Add from File")
@@ -184,7 +211,6 @@ class AddSongDialog(QDialog):
                 }
                 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    # Search for songs first
                     results = ydl.extract_info(f"{platform}10:song {query}", download=False)
                     
                     self.results_list.clear()
@@ -197,7 +223,6 @@ class AddSongDialog(QDialog):
                             item.setData(Qt.UserRole, entry['url'])
                             self.results_list.addItem(item)
                     
-                    # Then search for artists
                     results = ydl.extract_info(f"{platform}5:artist {query}", download=False)
                     if results and 'entries' in results:
                         for entry in results['entries']:
@@ -292,6 +317,11 @@ class PlaylistView(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(20)
         
+        status_layout = QHBoxLayout()
+        self.connection_status = ConnectionStatus()
+        status_layout.addWidget(self.connection_status)
+        status_layout.addStretch()
+        
         header_layout = QHBoxLayout()
         self.back_btn = QPushButton("← Back")
         self.back_btn.setFixedSize(100, 40)
@@ -299,7 +329,6 @@ class PlaylistView(QWidget):
         
         volume_layout = QHBoxLayout()
         
-        # Now playing label to the left of volume controls
         self.now_playing = QLabel("Now Playing - None")
         self.now_playing.setStyleSheet("color: #b3b3b3; font-size: 12px;")
         
@@ -333,6 +362,7 @@ class PlaylistView(QWidget):
         self.add_song_btn.setFixedHeight(50)
         self.add_song_btn.clicked.connect(self.add_song)  
         
+        layout.addLayout(status_layout)
         layout.addLayout(header_layout)
         layout.addWidget(self.songs_list)
         layout.addWidget(self.player_controls)
@@ -349,12 +379,11 @@ class PlaylistView(QWidget):
         
         self.player_controls.next_btn.clicked.connect(self.play_next_track)
         self.player_controls.prev_btn.clicked.connect(self.play_prev_track)
-        
         self.player_controls.duplicate_btn.clicked.connect(self.duplicate_current_track)
         self.player_controls.delete_btn.clicked.connect(self.delete_current_track)
+        self.player_controls.rename_btn.clicked.connect(self.rename_current_track)
         self.player.mediaStatusChanged.connect(self.on_media_status_changed)
         
-        # Подключаем кнопку rename из player_controls
         self.player_controls.rename_btn.clicked.connect(self.rename_current_track)
         
     def update_position(self, position):
@@ -444,7 +473,6 @@ class PlaylistView(QWidget):
             new_name, ok = QInputDialog.getText(self, "Rename Track", "Enter new name:", text=old_name)
             if ok and new_name:
                 try:
-                    # Keep extension
                     _, ext = os.path.splitext(old_name)
                     if not new_name.endswith(ext):
                         new_name += ext
@@ -452,11 +480,9 @@ class PlaylistView(QWidget):
                     new_path = os.path.join(self.current_playlist_path, new_name)
                     os.rename(old_path, new_path)
                     
-                    # Update list item
                     index = self.songs_list.row(current_item) + 1
                     current_item.setText(f"{index}. {new_name}")
                     
-                    # Update now playing if this is the current track
                     if self.current_track_index == self.songs_list.row(current_item):
                         self.now_playing.setText(f"Now Playing - {new_name}")
                         
@@ -541,8 +567,8 @@ class MusicPlayer(QMainWindow):
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
         
-        QFontDatabase.addApplicationFont("./Montserrat-Regular.ttf")
-        QFontDatabase.addApplicationFont("./Montserrat-Bold.ttf")
+        QFontDatabase.addApplicationFont("./fonts/Montserrat-Regular.ttf")
+        QFontDatabase.addApplicationFont("./fonts//Montserrat-Bold.ttf")
         
         self.setup_ui()
         self.load_playlists()
@@ -587,59 +613,56 @@ class MusicPlayer(QMainWindow):
         
         self.playlist_view.back_btn.clicked.connect(lambda: self.stack.setCurrentIndex(0))
         
-        self.setStyleSheet("""
-            QMainWindow, QWidget {
-                background-color: #121212;
+        self.setStyleSheet(f"""
+            QMainWindow, QWidget {{
+                background-color: {THEME_COLOR};
                 color: #ffffff;
                 font-family: 'Montserrat';
-            }
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #1db954, stop:1 #147d37);
+            }}
+            QPushButton {{
+                background-color: {BUTTON_COLOR};
                 border: none;
                 border-radius: 5px;
                 padding: 10px;
                 font-size: 14px;
                 font-weight: bold;
                 color: white;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #1ed760, stop:1 #1db954);
-            }
-            QLabel {
+            }}
+            QPushButton:hover {{
+                background-color: {BUTTON_HOVER};
+            }}
+            QLabel {{
                 font-size: 16px;
-            }
-            QListWidget {
-                background-color: #282828;
+            }}
+            QListWidget {{
+                background-color: {LIST_BG};
                 border-radius: 10px;
                 padding: 10px;
-            }
-            QListWidget::item {
-                background-color: #383838;
+            }}
+            QListWidget::item {{
+                background-color: {ITEM_BG};
                 border-radius: 5px;
                 margin-bottom: 5px;
                 padding: 10px;
                 font-size: 14px;
-            }
-            QListWidget::item:hover {
-                background-color: #404040;
-            }
-            QListWidget::item:selected {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #1db954, stop:1 #147d37);
-            }
-            QSlider::groove:horizontal {
+            }}
+            QListWidget::item:hover {{
+                background-color: {BUTTON_HOVER};
+            }}
+            QListWidget::item:selected {{
+                background-color: {ACCENT_COLOR};
+            }}
+            QSlider::groove:horizontal {{
                 height: 4px;
-                background: #282828;
+                background: {BUTTON_COLOR};
                 border-radius: 2px;
-            }
-            QSlider::handle:horizontal {
-                background: #1db954;
+            }}
+            QSlider::handle:horizontal {{
+                background: {ACCENT_COLOR};
                 border-radius: 7px;
                 width: 14px;
                 margin: -5px 0;
-            }
+            }}
         """)
     
     def open_playlist(self, item):
@@ -650,14 +673,11 @@ class MusicPlayer(QMainWindow):
     def create_playlist(self):
         name, ok = QInputDialog.getText(self, "New Playlist", "Enter playlist name:")
         if ok and name:
-            # Add to list widget
             self.playlist_list.addItem(name)
             
-            # Create directory structure
             playlist_path = f"{PLAYLISTS_PATH}/{name}"
             os.makedirs(f"{playlist_path}/songs", exist_ok=True)
             
-            # Create initial JSON file
             playlist_data = {
                 'name': name,
                 'songs': []
@@ -682,24 +702,16 @@ class MusicPlayer(QMainWindow):
                 pass
             self.playlist_list.takeItem(self.playlist_list.row(current_item))
 
-    def toggle_playback(self):
-        if self.playlist_view.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
-            self.playlist_view.player.pause()
-            self.play_btn.setText("▶")
-        else:
-            self.playlist_view.player.play()
-            self.play_btn.setText("⏸")
-            
-    def change_volume(self, value):
-        self.playlist_view.audio_output.setVolume(value / 100.0)
-
 if __name__ == "__main__":
-    for path in [ROOT_PATH, DOWNLOADS_PATH, PLAYLISTS_PATH]:
-        os.makedirs(path, exist_ok=True)
-    
-    app = QApplication(sys.argv)
-    app.setStyle('Fusion') 
-    player = MusicPlayer()
-    player.show()
-    sys.exit(app.exec())
-sys.exit(app.exec())
+    try:
+        for path in [ROOT_PATH, DOWNLOADS_PATH, PLAYLISTS_PATH]:
+            os.makedirs(path, exist_ok=True)
+        
+        app = QApplication(sys.argv)
+        app.setStyle('Fusion')
+        player = MusicPlayer()
+        player.show()
+        sys.exit(app.exec())
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        input("Press Enter to exit...")
