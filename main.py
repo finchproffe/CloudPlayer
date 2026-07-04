@@ -8,39 +8,42 @@ import re
 import random
 from pathlib import Path
 from html.parser import HTMLParser
+import discord_rpc
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QListWidget, QListWidgetItem, QLineEdit, QDialog, QInputDialog,
-    QFileDialog, QMessageBox, QProgressDialog, QSlider, QStyle, QStackedWidget, QTextEdit
+    QFileDialog, QMessageBox, QProgressDialog, QSlider, QStyle, QStackedWidget, QTextEdit,
+    QMenu, QGraphicsOpacityEffect
 )
 from PySide6.QtGui import (
     QIcon, QPixmap, QFontDatabase, QMovie, QKeyEvent, QKeySequence,
-    QPalette, QColor, QCursor, QScreen, QPainter
+    QPalette, QColor, QCursor, QScreen, QPainter, QShortcut, QAction
 )
 from PySide6.QtCore import (
-    Qt, QTimer, QUrl, QSize, QPoint, QRect, QFileInfo, QStandardPaths, QThread, Signal, QObject
+    Qt, QTimer, QUrl, QSize, QPoint, QRect, QFileInfo, QStandardPaths, QThread, Signal, QObject,
+    QPropertyAnimation, QEasingCurve
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 
-# === Пути ===
 DOCS_PATH = Path.home() / "Documents" / "CloudPlayer"
 DOWNLOADS_PATH = DOCS_PATH / "downloads"
 PLAYLISTS_PATH = DOCS_PATH / "playlists"
 SCRIPT_DIR = Path(__file__).parent
 FFMPEG_PATH = SCRIPT_DIR / "ffmpeg.exe"
 
-# === Цвета строгой плоской темы (Flat 2D Design) ===
+AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac", ".ogg", ".opus", ".webm"}
+
 BG_COLOR = "#121212"
 PANEL_BG = "#1A1A1A"
 BUTTON_BG = "#222222"
 BUTTON_HOVER = "#2D2D2D"
 BUTTON_BORDER = "#333333"
-ACCENT_COLOR = "#0D47A1"  # Темно-синий цвет выделения
+ACCENT_COLOR = "#0D47A1"
 TEXT_COLOR = "#E0E0E0"
 TEXT_MUTED = "#888888"
-ICON_COLOR = "#FFFFFF"  # Цвет всех svg-иконок в интерфейсе
+ICON_COLOR = "#FFFFFF"
 
 GENIUS_TOKEN = "7FBtGwlCeRvyuPf1fxFdR5_qTy3ARuxdbcaAHenQ1VXBXaHJJoJhyxB-MSVlhGqk"
 
@@ -48,10 +51,39 @@ def format_time(ms: int) -> str:
     s = ms // 1000
     return f"{s // 60}:{s % 60:02d}"
 
+def extract_sc_meta(info: dict) -> dict:
+    raw_title = info.get('title', 'Unknown Title')
+    uploader = info.get('uploader', 'Unknown Artist')
+    
+    artist = info.get('artist') or info.get('creator')
+    title = info.get('track')
+
+    if not artist or not title:
+        if " - " in raw_title:
+            parts = raw_title.split(" - ", 1)
+            artist = parts[0].strip()
+            title = parts[1].strip()
+        elif "-" in raw_title:
+            parts = raw_title.split("-", 1)
+            artist = parts[0].strip()
+            title = parts[1].strip()
+        else:
+            artist = artist or uploader
+            title = title or raw_title
+
+    duration = info.get('duration')
+    if isinstance(duration, (int, float)):
+        duration_str = format_time(int(duration * 1000))
+    else:
+        duration_str = info.get('duration_string', '??:??')
+
+    return {
+        "artist": str(artist).strip(),
+        "title": str(title).strip(),
+        "duration": duration_str
+    }
 
 def colored_icon(filename, color=ICON_COLOR, size=64):
-    """Загружает svg-иконку и перекрашивает её в заданный цвет (по умолчанию белый),
-    независимо от того, каким цветом залит исходный svg-файл."""
     path = SCRIPT_DIR / filename
     if not path.is_file():
         return QIcon()
@@ -74,7 +106,6 @@ def colored_icon(filename, color=ICON_COLOR, size=64):
     return QIcon(colored)
 
 
-# === Кастомный парсер HTML для Genius ===
 class GeniusLyricsParser(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -105,10 +136,6 @@ class GeniusLyricsParser(HTMLParser):
             self.lyrics.append(data)
 
 
-# === Поток для получения метаданных, обложки и текста из Genius ===
-# === Поток для получения метаданных, обложки и текста из Genius ===
-# === Обновленный поток метаданных с поддержкой обложек от yt-dlp ===
-# === Обновленный поток метаданных с поддержкой обложек от yt-dlp ===
 class TrackMetaFetcher(QThread):
     meta_ready = Signal(dict)
 
@@ -116,19 +143,37 @@ class TrackMetaFetcher(QThread):
         super().__init__()
         self.song_path = Path(song_path)
 
+    @staticmethod
+    def _normalize(text):
+        s = (text or "").lower().strip()
+        s = re.sub(r'\([^)]*\)|\[[^\]]*\]', ' ', s)
+        s = re.sub(r'\bfeat\.?\b|\bft\.?\b|\bfeaturing\b', ' ', s)
+        s = re.sub(r'[^a-zа-яё0-9\s]', ' ', s)
+        s = re.sub(r'\s+', ' ', s).strip()
+        return s
+
+    @staticmethod
+    def _is_match(expected, actual, min_len=3):
+        if not expected or not actual:
+            return False
+        if expected == actual:
+            return True
+        if min(len(expected), len(actual)) < min_len:
+            return False
+        return expected in actual or actual in expected
+
     def run(self):
-        base_name = self.song_path.stem  # Название файла без .mp3
-        target_dir = self.song_path.parent # Папка, где лежит трек (плейлист или загрузки)
+        base_name = self.song_path.stem
+        target_dir = self.song_path.parent
         
-        # Парсим название из имени файла
         raw_name = base_name
-        raw_name = re.sub(r'^\d+[\.\s\-]*', '', raw_name)  # Убираем номер трека в начале
-        raw_name = re.sub(r'\(.*?\)|\[.*?\]', '', raw_name).strip()  # Убираем скобки
+        raw_name = re.sub(r'^\d+[\.\s\-]*', '', raw_name)
+        raw_name = re.sub(r'\(.*?\)|\[.*?\]', '', raw_name).strip()
 
         artist = "Неизвестен"
         title = raw_name
+        duration = None
         
-        # Пытаемся разделить по " - " или "-"
         if " - " in raw_name:
             parts = raw_name.split(" - ", 1)
             artist = parts[0].strip()
@@ -143,10 +188,26 @@ class TrackMetaFetcher(QThread):
             "artist": artist,
             "prod": "",
             "lyrics": "Текст не найден.",
-            "cover_bytes": None
+            "cover_bytes": None,
+            "cover_url": None,
+            "duration": duration
         }
 
-        # 1. ПОПЫТКА НАЙТИ ЛОКАЛЬНУЮ ОБЛОЖКУ ОТ YT-DLP В ПАПКЕ С ТРЕКОМ
+        sidecar_path = target_dir / f"{base_name}.json"
+        if sidecar_path.exists():
+            try:
+                with open(sidecar_path, "r", encoding="utf-8") as f:
+                    sidecar_data = json.load(f)
+                artist = sidecar_data.get("artist", artist)
+                title = sidecar_data.get("title", title)
+                duration = sidecar_data.get("duration")
+                
+                result_data["artist"] = artist
+                result_data["title"] = title
+                result_data["duration"] = duration
+            except Exception as e:
+                pass
+
         local_cover_jpg = target_dir / f"{base_name}.jpg"
         local_cover_png = target_dir / f"{base_name}.png"
         local_cover_webp = target_dir / f"{base_name}.webp"
@@ -162,17 +223,13 @@ class TrackMetaFetcher(QThread):
                 with open(chosen_local_path, "rb") as f:
                     result_data["cover_bytes"] = f.read()
             except Exception as e:
-                print(f"[Local cover error] {e}")
+                pass
 
-        # 2. РАБОТА С GENIUS (для текста и обложки, если не найдена локально)
-        if not raw_name:
+        if not title:
             self.meta_ready.emit(result_data)
             return
 
-        expected_artist = artist
-        expected_title = title
-            
-        search_query = f"{expected_artist} {expected_title}".strip()
+        search_query = f"{artist} {title}".strip()
         search_url = f"https://api.genius.com/search?q={urllib.parse.quote(search_query)}"
         headers = {
             "Authorization": f"Bearer {GENIUS_TOKEN}",
@@ -186,26 +243,30 @@ class TrackMetaFetcher(QThread):
             
             hits = data.get("response", {}).get("hits", [])
             if hits:
-                hit_result = hits[0]["result"]
-                
-                if expected_artist:
-                    exp_art_lower = expected_artist.lower()
-                    exp_tit_lower = expected_title.lower()
-                    for hit in hits:
-                        item = hit["result"]
-                        hit_artist = item.get("primary_artist", {}).get("name", "").lower()
-                        hit_title = item.get("title", "").lower()
-                        if (exp_art_lower in hit_artist or hit_artist in exp_art_lower) and \
-                           (exp_tit_lower in hit_title or hit_title in exp_tit_lower):
-                            hit_result = item
-                            break
+                exp_art_lower = self._normalize(artist)
+                exp_tit_lower = self._normalize(title)
 
-                song_id = hit_result.get("id")
-                
-                # Получаем обложку, если не найдена локально
+                hit_result = None
+                for hit in hits:
+                    item = hit.get("result", {})
+                    hit_artist = self._normalize(item.get("primary_artist", {}).get("name", ""))
+                    hit_title = self._normalize(item.get("title", ""))
+
+                    artist_ok = self._is_match(exp_art_lower, hit_artist)
+                    title_ok = self._is_match(exp_tit_lower, hit_title)
+
+                    if artist_ok and title_ok:
+                        hit_result = item
+                        break
+
+                if hit_result is None:
+                    self.meta_ready.emit(result_data)
+                    return
+
                 if not result_data["cover_bytes"]:
                     cover_url = hit_result.get("song_art_image_thumbnail_url")
                     if cover_url:
+                        result_data["cover_url"] = cover_url
                         try:
                             img_req = urllib.request.Request(cover_url, headers={"User-Agent": "Mozilla/5.0"})
                             with urllib.request.urlopen(img_req, timeout=4) as img_res:
@@ -237,52 +298,166 @@ class TrackMetaFetcher(QThread):
 
         self.meta_ready.emit(result_data)
 
-# === Фоновый парсер рекомендаций для главного меню ===
 class RecommendationFetcher(QThread):
-    rec_ready = Signal(str, str) # artist, title
+    rec_ready = Signal(list)
+    TARGET_COUNT = 3
 
-    def run(self):
-        artists = ["White Punk", "Kizaru", "Big Baby Tape", "Aarne", "Bushido Zho", "Lovesomemama"]
-        
-        # Попробуем собрать реальных артистов из файлов пользователя
+    @staticmethod
+    def _normalize_key(text: str) -> str:
+        s = (text or "").lower().strip()
+        s = re.sub(r'\([^)]*\)|\[[^\]]*\]', ' ', s)
+        s = re.sub(r'[^a-zа-яё0-9\s]', ' ', s)
+        s = re.sub(r'\s+', ' ', s).strip()
+        return s
+
+    @staticmethod
+    def _collect_user_artists():
+        artists = []
+        seen = set()
+        if not PLAYLISTS_PATH.exists():
+            return artists
         try:
-            found_artists = []
-            if PLAYLISTS_PATH.exists():
-                for p_dir in PLAYLISTS_PATH.iterdir():
-                    songs_dir = p_dir / "songs"
-                    if songs_dir.exists():
-                        for f in songs_dir.glob("*.*"):
-                            if "-" in f.stem:
-                                parts = f.stem.split("-")
-                                found_artists.append(parts[0].strip())
-            if found_artists:
-                artists = list(set(found_artists))
+            for p_dir in PLAYLISTS_PATH.iterdir():
+                songs_dir = p_dir / "songs"
+                if not songs_dir.exists():
+                    continue
+                for f in songs_dir.glob("*.*"):
+                    if f.suffix.lower() not in AUDIO_EXTENSIONS:
+                        continue
+
+                    artist = None
+                    sidecar = f.parent / f"{f.stem}.json"
+                    if sidecar.exists():
+                        try:
+                            with open(sidecar, "r", encoding="utf-8") as fh:
+                                data = json.load(fh)
+                            candidate = (data.get("artist") or "").strip()
+                            if candidate:
+                                artist = candidate
+                        except Exception:
+                            pass
+
+                    if not artist and "-" in f.stem:
+                        artist = f.stem.split("-", 1)[0].strip()
+
+                    if not artist:
+                        continue
+                    key = artist.lower()
+                    if key not in seen:
+                        seen.add(key)
+                        artists.append(artist)
         except Exception:
             pass
+        return artists
 
-        random_artist = random.choice(artists)
+    @staticmethod
+    def _collect_user_track_keys():
+        keys = set()
+        if not PLAYLISTS_PATH.exists():
+            return keys
+        try:
+            for p_dir in PLAYLISTS_PATH.iterdir():
+                songs_dir = p_dir / "songs"
+                if not songs_dir.exists():
+                    continue
+                for f in songs_dir.glob("*.*"):
+                    if f.suffix.lower() not in AUDIO_EXTENSIONS:
+                        continue
+                    artist, title = None, None
+
+                    sidecar = f.parent / f"{f.stem}.json"
+                    if sidecar.exists():
+                        try:
+                            with open(sidecar, "r", encoding="utf-8") as fh:
+                                data = json.load(fh)
+                            artist = (data.get("artist") or "").strip() or None
+                            title = (data.get("title") or "").strip() or None
+                        except Exception:
+                            pass
+
+                    if not artist or not title:
+                        if " - " in f.stem:
+                            parts = f.stem.split(" - ", 1)
+                        elif "-" in f.stem:
+                            parts = f.stem.split("-", 1)
+                        else:
+                            parts = None
+                        if parts:
+                            artist = (artist or parts[0].strip())
+                            title = (title or parts[1].strip() if len(parts) > 1 else None)
+
+                    if artist and title:
+                        keys.add(
+                            RecommendationFetcher._normalize_key(artist)
+                            + " "
+                            + RecommendationFetcher._normalize_key(title)
+                        )
+        except Exception:
+            pass
+        return keys
+
+    def _fetch_tracks_for_artist(self, artist: str, headers: dict) -> list:
+        try:
+            search_url = f"https://api.genius.com/search?q={urllib.parse.quote(artist)}"
+            req = urllib.request.Request(search_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=5) as response:
+                data = json.loads(response.read().decode('utf-8'))
+            hits = data.get("response", {}).get("hits", [])
+            results = []
+            for hit in hits:
+                item = hit.get("result", {})
+                hit_artist = item.get("primary_artist", {}).get("name", artist)
+                hit_title = item.get("title", "")
+                if hit_title:
+                    results.append({"artist": hit_artist, "title": hit_title})
+            return results
+        except Exception:
+            return []
+
+    def run(self):
+        artists = self._collect_user_artists()
+
+        if not artists:
+            self.rec_ready.emit([])
+            return
+
+        existing = self._collect_user_track_keys()
         headers = {
             "Authorization": f"Bearer {GENIUS_TOKEN}",
             "User-Agent": "Mozilla/5.0"
         }
-        
-        try:
-            search_url = f"https://api.genius.com/search?q={urllib.parse.quote(random_artist)}"
-            req = urllib.request.Request(search_url, headers=headers)
-            with urllib.request.urlopen(req, timeout=5) as response:
-                data = json.loads(response.read().decode('utf-8'))
-                hits = data.get("response", {}).get("hits", [])
-                if hits:
-                    random_hit = random.choice(hits)["result"]
-                    self.rec_ready.emit(random_hit.get("primary_artist", {}).get("name", random_artist), random_hit.get("title", "Трек"))
-                    return
-        except Exception:
-            pass
-        
-        self.rec_ready.emit(random_artist, "Популярный трек")
 
+        recommendations = []
+        seen_titles = set()
+        shuffled = artists[:]
+        random.shuffle(shuffled)
 
-# === Фоновый поток для бесшумного скачивания рекомендации ===
+        max_artist_attempts = max(10, len(shuffled) * 2)
+
+        for artist in shuffled:
+            if len(recommendations) >= self.TARGET_COUNT:
+                break
+            if max_artist_attempts <= 0:
+                break
+            max_artist_attempts -= 1
+
+            tracks = self._fetch_tracks_for_artist(artist, headers)
+            if not tracks:
+                continue
+            random.shuffle(tracks)
+
+            for tr in tracks:
+                if len(recommendations) >= self.TARGET_COUNT:
+                    break
+                a, t = tr["artist"], tr["title"]
+                key = self._normalize_key(a) + " " + self._normalize_key(t)
+                if key in existing or key in seen_titles:
+                    continue
+                seen_titles.add(key)
+                recommendations.append((a, t))
+
+        self.rec_ready.emit(recommendations)
+
 class BackgroundDownloader(QThread):
     finished_signal = Signal(bool, str)
 
@@ -291,22 +466,15 @@ class BackgroundDownloader(QThread):
         self.query = query
         self.dest_path = dest_path
 
-def run(self):
+    def run(self):
         try:
             import yt_dlp
             ydl_opts = {
-                'format': 'bestaudio/best',  # Берем лучший исходник
-                'writethumbnail': True,      # Скачиваем обложку с SoundCloud
+                'format': 'bestaudio/best',
+                'writethumbnail': True,
                 'postprocessors': [
-                    {
-                        'key': 'FFmpegExtractAudio',
-                        'preferredcodec': 'mp3',
-                        'preferredquality': '320', # МАКСИМАЛЬНОЕ КАЧЕСТВО ЗВУКА
-                    },
-                    {
-                        'key': 'FFmpegThumbnailsConvertor',
-                        'format': 'jpg', # Делаем обложку в формате JPG
-                    }
+                    {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '320'},
+                    {'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}
                 ],
                 'outtmpl': str(self.dest_path / '%(title).200s.%(ext)s'),
                 'ffmpeg_location': str(FFMPEG_PATH),
@@ -315,13 +483,25 @@ def run(self):
                 'windows_creation_flags': 0x08000000,
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.extract_info(f"scsearch1:{self.query}", download=True)
+                info = ydl.extract_info(f"scsearch1:{self.query}", download=True)
+                if info and 'entries' in info and info['entries']:
+                    entry = info['entries'][0]
+                    meta = extract_sc_meta(entry)
+                    
+                    filepath = entry.get('requested_downloads', [{}])[0].get('filepath')
+                    if not filepath:
+                        filepath = ydl.prepare_filename(entry)
+                        
+                    if filepath:
+                        stem = Path(filepath).stem
+                        json_path = self.dest_path / f"{stem}.json"
+                        with open(json_path, 'w', encoding='utf-8') as f:
+                            json.dump(meta, f, ensure_ascii=False, indent=2)
+
             self.finished_signal.emit(True, "Успешно добавлено!")
         except Exception as e:
             self.finished_signal.emit(False, str(e))
 
-
-# === PlayerControls ===
 class PlayerControls(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -336,60 +516,21 @@ class PlayerControls(QWidget):
         self.current_time = QLabel("0:00")
         self.total_time = QLabel("0:00")
         self.progress_bar = QSlider(Qt.Horizontal)
-        
+
         for label in [self.current_time, self.total_time]:
             label.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px; font-weight: 500;")
-            
+
         time_layout.addWidget(self.current_time)
         time_layout.addWidget(self.progress_bar)
         time_layout.addWidget(self.total_time)
 
-        controls_layout = QHBoxLayout()
-        controls_layout.setSpacing(10)
-
-        self.prev_btn = QPushButton(" PREV")
-        self.play_btn = QPushButton(" PLAY")
-        self.next_btn = QPushButton(" NEXT")
-        self.duplicate_btn = QPushButton(" DUPLICATE")
-        self.delete_btn = QPushButton(" DELETE")
-        self.rename_btn = QPushButton(" RENAME")
-
-        def load_svg(btn, filename):
-            icon = colored_icon(filename)
-            if not icon.isNull():
-                btn.setIcon(icon)
-                btn.setIconSize(QSize(14, 14))
-
-        load_svg(self.prev_btn, "prev.svg")
-        load_svg(self.play_btn, "play.svg")
-        load_svg(self.next_btn, "next.svg")
-        load_svg(self.duplicate_btn, "copy.svg")
-        load_svg(self.delete_btn, "delete.svg")
-        load_svg(self.rename_btn, "rename.svg")
-
-        for btn in [self.prev_btn, self.play_btn, self.next_btn,
-                    self.duplicate_btn, self.delete_btn, self.rename_btn]:
-            btn.setFixedHeight(36)
-
-        controls_layout.addStretch()
-        controls_layout.addWidget(self.prev_btn)
-        controls_layout.addWidget(self.play_btn)
-        controls_layout.addWidget(self.next_btn)
-        controls_layout.addWidget(self.duplicate_btn)
-        controls_layout.addWidget(self.delete_btn)
-        controls_layout.addWidget(self.rename_btn)
-        controls_layout.addStretch()
-
         layout.addLayout(time_layout)
-        layout.addLayout(controls_layout)
         self.progress_bar.sliderMoved.connect(self.on_seek)
 
     def on_seek(self, position):
         if hasattr(self.parent(), 'seek_position'):
             self.parent().seek_position(position)
 
-
-# === MiniControlBar ===
 class MiniControlBar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -431,8 +572,6 @@ class MiniControlBar(QWidget):
         if not icon.isNull():
             self.play_btn.setIcon(icon)
 
-
-# === AddSongDialog (SoundCloud Only) ===
 class AddSongDialog(QDialog):
     def __init__(self, parent=None, playlist_name=None):
         super().__init__(parent)
@@ -480,7 +619,6 @@ class AddSongDialog(QDialog):
         if not query:
             return
 
-        # Ищем строго по SoundCloud через scsearch
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
@@ -496,7 +634,7 @@ class AddSongDialog(QDialog):
                 info = ydl.extract_info(f"scsearch15:{query}", download=False)
                 entries = info.get('entries', []) if info else []
         except Exception as ex:
-            print(f"[SoundCloud Search] failed: {ex}")
+            print(f"failed: {ex}")
 
         self.results_list.clear()
         if not entries:
@@ -552,17 +690,10 @@ class AddSongDialog(QDialog):
             import yt_dlp
             ydl_opts = {
                 'format': 'bestaudio/best',
-                'writethumbnail': True,      # Скачиваем обложку
+                'writethumbnail': True,
                 'postprocessors': [
-                    {
-                        'key': 'FFmpegExtractAudio',
-                        'preferredcodec': 'mp3',
-                        'preferredquality': '320', # МАКСИМАЛЬНОЕ КАЧЕСТВО ЗВУКА
-                    },
-                    {
-                        'key': 'FFmpegThumbnailsConvertor',
-                        'format': 'jpg',
-                    }
+                    {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '320'},
+                    {'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}
                 ],
                 'outtmpl': str(self.playlist_path / '%(title).200s.%(ext)s'),
                 'ffmpeg_location': str(FFMPEG_PATH),
@@ -572,7 +703,22 @@ class AddSongDialog(QDialog):
             }
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.extract_info(url_or_path, download=True)
+                info = ydl.extract_info(url_or_path, download=True)
+                entries = info.get('entries', [info]) if 'entries' in info else [info]
+                
+                for entry in entries:
+                    if not entry: continue
+                    meta = extract_sc_meta(entry)
+                    
+                    filepath = entry.get('requested_downloads', [{}])[0].get('filepath')
+                    if not filepath:
+                        filepath = ydl.prepare_filename(entry)
+                        
+                    if filepath:
+                        stem = Path(filepath).stem
+                        json_path = self.playlist_path / f"{stem}.json"
+                        with open(json_path, 'w', encoding='utf-8') as f:
+                            json.dump(meta, f, ensure_ascii=False, indent=2)
                 return True
         except Exception as e:
             QMessageBox.critical(self, "Download Failed", str(e)[:400])
@@ -585,13 +731,11 @@ class AddSongDialog(QDialog):
                 self.accept()
 
     def add_from_file(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Select Audio Files", "", "Audio (*.mp3 *.wav *.m4a)")
+        files, _ = QFileDialog.getOpenFileNames(self, "Select Audio Files", "", "Audio (*.mp3 *.wav *.m4a *.flac *.ogg)")
         if files:
             if any(self._download_one(f) for f in files):
                 self.accept()
 
-
-# === PlaylistView ===
 class PlaylistView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -607,7 +751,6 @@ class PlaylistView(QWidget):
         layout.setSpacing(20)
         layout.setContentsMargins(20, 20, 20, 20)
 
-        # Header
         header_layout = QHBoxLayout()
         self.back_btn = QPushButton("← Back")
         self.back_btn.setFixedSize(90, 36)
@@ -640,15 +783,14 @@ class PlaylistView(QWidget):
         header_layout.addWidget(self.volume_slider)
         layout.addLayout(header_layout)
 
-        # Центр: Слева список треков, Справа (1/3.5) — Блок Информации Spotify-style
         center_layout = QHBoxLayout()
         center_layout.setSpacing(20)
 
         self.songs_list = QListWidget()
-        # Пропорция 2.5 к 1 дает суммарно 3.5, правая часть занимает ровно 1/3.5 часть
+        self.songs_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.songs_list.customContextMenuRequested.connect(self._show_track_context_menu)
         center_layout.addWidget(self.songs_list, stretch=25)
 
-        # Spotify Right Sidebar (1 / 3.5)
         self.right_sidebar = QWidget()
         sidebar_layout = QVBoxLayout(self.right_sidebar)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
@@ -658,6 +800,13 @@ class PlaylistView(QWidget):
         self.cover_label.setFixedSize(240, 240)
         self.cover_label.setStyleSheet(f"background-color: {PANEL_BG}; border: 1px solid {BUTTON_BORDER}; border-radius: 4px;")
         self.cover_label.setScaledContents(True)
+
+        self.cover_opacity_effect = QGraphicsOpacityEffect(self.cover_label)
+        self.cover_opacity_effect.setOpacity(0.0)
+        self.cover_label.setGraphicsEffect(self.cover_opacity_effect)
+        self.cover_anim = QPropertyAnimation(self.cover_opacity_effect, b"opacity", self)
+        self.cover_anim.setDuration(150)
+        self.cover_anim.setEasingCurve(QEasingCurve.OutCubic)
         
         self.track_title = QLabel("Название песни")
         self.track_title.setStyleSheet("font-size: 16px; font-weight: 700; color: #ffffff;")
@@ -679,14 +828,12 @@ class PlaylistView(QWidget):
         center_layout.addWidget(self.right_sidebar, stretch=10)
         layout.addLayout(center_layout)
 
-        # Controls Layout
         self.player_controls = PlayerControls()
         layout.addWidget(self.player_controls)
 
         self.mini_bar = MiniControlBar()
         layout.addWidget(self.mini_bar)
 
-        # Нижняя панель с кнопками Shuffle и Add Song
         bottom_actions = QHBoxLayout()
         self.shuffle_btn = QPushButton(" Shuffle Mode")
         shuffle_icon = colored_icon("shuffle.svg")
@@ -701,23 +848,14 @@ class PlaylistView(QWidget):
         bottom_actions.addWidget(self.add_song_btn)
         layout.addLayout(bottom_actions)
 
-        # Media Setup
         self.player = QMediaPlayer()
         self.audio_output = QAudioOutput()
         self.player.setAudioOutput(self.audio_output)
         self.audio_output.setVolume(0.7)
 
-        # Connections
         self.songs_list.itemDoubleClicked.connect(self.play_song)
         self.add_song_btn.clicked.connect(self.add_song)
         self.shuffle_btn.clicked.connect(self.toggle_shuffle)
-        
-        self.player_controls.play_btn.clicked.connect(self.toggle_playback)
-        self.player_controls.next_btn.clicked.connect(self.play_next_track)
-        self.player_controls.prev_btn.clicked.connect(self.play_prev_track)
-        self.player_controls.duplicate_btn.clicked.connect(self.duplicate_current_track)
-        self.player_controls.delete_btn.clicked.connect(self.delete_current_track)
-        self.player_controls.rename_btn.clicked.connect(self.rename_current_track)
         
         self.mini_bar.play_btn.clicked.connect(self.toggle_playback)
         self.mini_bar.next_btn.clicked.connect(self.play_next_track)
@@ -737,6 +875,9 @@ class PlaylistView(QWidget):
         else:
             self.shuffle_btn.setStyleSheet("")
 
+    def set_playback_state(self, is_playing: bool):
+        self.mini_bar.set_playing(is_playing)
+
     def update_position(self, pos):
         self.player_controls.current_time.setText(format_time(pos))
         self.player_controls.progress_bar.setValue(pos)
@@ -749,10 +890,13 @@ class PlaylistView(QWidget):
         self.songs_list.clear()
         if self.current_playlist_path and self.current_playlist_path.exists():
             files = sorted(self.current_playlist_path.glob("*.*"))
-            for i, f in enumerate(files, 1):
-                item = QListWidgetItem(f"{i}. {f.stem}")
-                item.setData(Qt.UserRole, f.name)
-                self.songs_list.addItem(item)
+            index = 1
+            for f in files:
+                if f.suffix.lower() in AUDIO_EXTENSIONS:
+                    item = QListWidgetItem(f"{index}. {f.stem}")
+                    item.setData(Qt.UserRole, f.name)
+                    self.songs_list.addItem(item)
+                    index += 1
 
     def seek_position(self, pos):
         self.player.setPosition(pos)
@@ -773,24 +917,21 @@ class PlaylistView(QWidget):
             
             self.player.setSource(QUrl.fromLocalFile(str(path)))
             self.player.play()
-            self.player_controls.play_btn.setText(" PAUSE")
-            self.mini_bar.set_playing(True)
+            self.set_playback_state(True)
             
             stem = Path(filename).stem
             self.now_playing.setText(f"Now Playing — {stem}")
             self.current_track_index = idx
 
-            # Обнуляем UI до загрузки Genius
             self.track_title.setText(stem)
             self.track_artist_prod.setText("Загрузка инфо...")
             self.cover_label.clear()
             self.lyrics_display.setText("Загрузка текста...")
 
-# ОБНОВЛЕНО: Передаем ПОЛНЫЙ ПУТЬ к треку, а не только stem
             if self.meta_thread and self.meta_thread.isRunning():
                 self.meta_thread.terminate()
                 
-            self.meta_thread = TrackMetaFetcher(path)  # <- Изменение тут
+            self.meta_thread = TrackMetaFetcher(path)
             self.meta_thread.meta_ready.connect(self.apply_track_metadata)
             self.meta_thread.start()
 
@@ -799,21 +940,101 @@ class PlaylistView(QWidget):
 
     def apply_track_metadata(self, data):
         self.track_title.setText(data["title"])
-        self.track_artist_prod.setText(data["artist"])
+        
+        artist_text = data["artist"]
+        if data.get("duration"):
+            artist_text += f" • {data['duration']}"
+        self.track_artist_prod.setText(artist_text)
+        
         self.lyrics_display.setText(data["lyrics"])
         
         if data["cover_bytes"]:
             px = QPixmap()
             px.loadFromData(data["cover_bytes"])
             self.cover_label.setPixmap(px)
+            self.cover_opacity_effect.setOpacity(0.0)
+            self.cover_anim.setStartValue(0.0)
+            self.cover_anim.setEndValue(1.0)
+            self.cover_anim.stop()
+            self.cover_anim.start()
         else:
             self.cover_label.setText(" No Cover")
+            self.cover_opacity_effect.setOpacity(1.0)
+
+        discord_rpc.update_now_playing(
+            title=data.get("title", "Неизвестно"),
+            artist=data.get("artist", "Неизвестно"),
+            cover_url=data.get("cover_url") 
+        )
+
+    def _show_track_context_menu(self, pos: QPoint):
+        item = self.songs_list.itemAt(pos)
+        if not item:
+            return
+
+        self.songs_list.setCurrentItem(item)
+
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {PANEL_BG};
+                border: 1px solid {BUTTON_BORDER};
+                border-radius: 4px;
+                padding: 4px;
+                color: {TEXT_COLOR};
+                font-size: 13px;
+            }}
+            QMenu::item {{
+                background-color: transparent;
+                border-radius: 3px;
+                padding: 7px 22px 7px 14px;
+                margin: 1px 2px;
+            }}
+            QMenu::item:selected {{
+                background-color: {ACCENT_COLOR};
+                color: #ffffff;
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background: {BUTTON_BORDER};
+                margin: 4px 8px;
+            }}
+        """)
+
+        act_play = menu.addAction("Воспроизвести")
+        menu.addSeparator()
+        act_rename = menu.addAction("Переименовать")
+        act_duplicate = menu.addAction("Дублировать")
+        act_delete = menu.addAction("Удалить")
+
+        play_icon = colored_icon("play.svg", size=32)
+        rename_icon = colored_icon("rename.svg", size=32)
+        dup_icon = colored_icon("copy.svg", size=32)
+        del_icon = colored_icon("delete.svg", size=32)
+        if not play_icon.isNull():
+            act_play.setIcon(play_icon)
+        if not rename_icon.isNull():
+            act_rename.setIcon(rename_icon)
+        if not dup_icon.isNull():
+            act_duplicate.setIcon(dup_icon)
+        if not del_icon.isNull():
+            act_delete.setIcon(del_icon)
+
+        chosen = menu.exec(self.songs_list.viewport().mapToGlobal(pos))
+        if chosen is act_play:
+            self.play_song(item)
+        elif chosen is act_rename:
+            self.rename_current_track()
+        elif chosen is act_duplicate:
+            self.duplicate_current_track()
+        elif chosen is act_delete:
+            self.delete_current_track()
 
     def toggle_playback(self):
         if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.player.pause()
-            self.player_controls.play_btn.setText(" PLAY")
-            self.mini_bar.set_playing(False)
+            self.set_playback_state(False)
+            discord_rpc.update_paused()
         else:
             item = self.songs_list.currentItem()
             if item:
@@ -821,8 +1042,8 @@ class PlaylistView(QWidget):
                     self.play_song(item)
                 else:
                     self.player.play()
-                    self.player_controls.play_btn.setText(" PAUSE")
-                    self.mini_bar.set_playing(True)
+                    self.set_playback_state(True)
+                    discord_rpc.update_now_playing(self.track_title.text(), self.track_artist_prod.text().split(' • ')[0], None)
             elif self.songs_list.count() > 0:
                 self.songs_list.setCurrentRow(0)
                 self.play_song(self.songs_list.item(0))
@@ -865,6 +1086,12 @@ class PlaylistView(QWidget):
             if not (self.current_playlist_path / new_name).exists(): break
             counter += 1
         shutil.copy2(src, self.current_playlist_path / new_name)
+        
+        for extra_ext in ['.json', '.jpg', '.png', '.webp']:
+            extra_src = self.current_playlist_path / f"{base}{extra_ext}"
+            if extra_src.exists():
+                shutil.copy2(extra_src, self.current_playlist_path / f"{base} ({counter}){extra_ext}")
+                
         self.update_songs_list()
         self.save_playlist()
 
@@ -881,13 +1108,18 @@ class PlaylistView(QWidget):
             try:
                 if path.exists():
                     os.remove(path)
+                base = path.stem
+                for extra_ext in ['.json', '.jpg', '.png', '.webp']:
+                    extra_file = path.parent / f"{base}{extra_ext}"
+                    if extra_file.exists():
+                        os.remove(extra_file)
+                        
                 row = self.songs_list.row(item)
                 if row >= 0:
                     self.songs_list.takeItem(row)
                 self.save_playlist()
                 self.update_songs_list()
             except PermissionError:
-                # Windows ещё не успел освободить дескриптор файла — пробуем ещё раз чуть позже
                 if attempt < 10:
                     QTimer.singleShot(200, lambda: try_remove(attempt + 1))
                 else:
@@ -899,17 +1131,13 @@ class PlaylistView(QWidget):
                 QMessageBox.critical(self, "Error", f"Can't delete:\n{e}")
 
         if is_playing_this:
-            # Полностью останавливаем и отвязываем плеер от файла перед удалением,
-            # иначе Windows держит файл занятым и удаление падает с WinError 32.
             self.player.stop()
             self.player.setSource(QUrl())
-            self.player_controls.play_btn.setText(" PLAY")
             self.mini_bar.set_playing(False)
             self.now_playing.setText("Now Playing — None")
             self.current_track_index = -1
             self.lyrics_display.clear()
             self.cover_label.clear()
-            # Небольшая задержка, чтобы ОС успела освободить файловый дескриптор
             QTimer.singleShot(250, try_remove)
         else:
             try_remove()
@@ -931,6 +1159,12 @@ class PlaylistView(QWidget):
                     self.player.stop()
                     self.player.setSource(QUrl())
                 os.rename(old_path, self.current_playlist_path / new_name)
+                
+                for extra_ext in ['.json', '.jpg', '.png', '.webp']:
+                    old_extra = self.current_playlist_path / f"{old_stem}{extra_ext}"
+                    if old_extra.exists():
+                        os.rename(old_extra, self.current_playlist_path / f"{new_stem.strip()}{extra_ext}")
+                        
                 self.save_playlist()
                 self.update_songs_list()
             except Exception as e:
@@ -957,15 +1191,11 @@ class PlaylistView(QWidget):
         self.playlist_name.setText(name)
         self.update_songs_list()
 
-
-# === HotkeySignals ===
 class HotkeySignals(QObject):
     play_pause = Signal()
     next_track = Signal()
     prev_track = Signal()
 
-
-# === MusicPlayer (Главное окно) ===
 class MusicPlayer(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -978,25 +1208,34 @@ class MusicPlayer(QMainWindow):
         self.setup_ui()
         self.load_playlists()
 
-        # Запуск фонового генератора случайных рекомендаций
         self.rec_title = ""
         self.rec_artist = ""
+        self.rec_data = []
         self.rec_thread = RecommendationFetcher()
         self.rec_thread.rec_ready.connect(self.display_recommendation)
-        self.rec_thread.start()
+        self.refresh_recommendation()
 
-        # Глобальные хоткеи
         self.hotkey_signals = HotkeySignals()
         self.hotkey_signals.play_pause.connect(lambda: self.stack.widget(1).toggle_playback())
         self.hotkey_signals.next_track.connect(lambda: self.stack.widget(1).play_next_track())
         self.hotkey_signals.prev_track.connect(lambda: self.stack.widget(1).play_prev_track())
 
+        self.shortcut_prev = QShortcut(QKeySequence("F7"), self)
+        self.shortcut_play_pause = QShortcut(QKeySequence("F8"), self)
+        self.shortcut_next = QShortcut(QKeySequence("F9"), self)
+        for shortcut in (self.shortcut_prev, self.shortcut_play_pause, self.shortcut_next):
+            shortcut.setContext(Qt.ApplicationShortcut)
+        self.shortcut_prev.activated.connect(self.playlist_view.play_prev_track)
+        self.shortcut_play_pause.activated.connect(self.playlist_view.toggle_playback)
+        self.shortcut_next.activated.connect(self.playlist_view.play_next_track)
+        
+        discord_rpc.connect()
+        
     def setup_ui(self):
         self.stack = QStackedWidget()
         main_view = QWidget()
         self.playlist_view = PlaylistView(self)
 
-        # Коннектим кнопку Назад правильно
         self.playlist_view.back_btn.clicked.connect(lambda: self.stack.setCurrentIndex(0))
 
         main_layout = QVBoxLayout(main_view)
@@ -1009,23 +1248,41 @@ class MusicPlayer(QMainWindow):
         self.playlist_list.setStyleSheet("QListWidget::item { font-size: 16px; padding: 12px; }")
         self.playlist_list.itemDoubleClicked.connect(self.open_playlist)
 
-        # Рекомендация в самом низу блока плейлистов
         self.rec_box = QWidget()
         self.rec_box.setStyleSheet(f"background-color: {PANEL_BG}; border: 1px solid {BUTTON_BORDER}; border-radius: 4px; margin-top: 5px;")
-        rec_layout = QHBoxLayout(self.rec_box)
-        rec_layout.setContentsMargins(15, 10, 15, 10)
-        
-        self.rec_label = QLabel("Рекомендация: Подбираем трек...")
-        self.rec_label.setStyleSheet("font-size: 13px; font-weight: 500;")
-        
-        self.rec_add_btn = QPushButton("+")
-        self.rec_add_btn.setFixedSize(28, 28)
-        self.rec_add_btn.setStyleSheet(f"background-color: {BUTTON_BG}; border: 1px solid {BUTTON_BORDER}; font-weight: bold; font-size: 14px; padding:0;")
-        self.rec_add_btn.clicked.connect(self.add_recommendation_to_playlist)
-        
-        rec_layout.addWidget(self.rec_label)
-        rec_layout.addStretch()
-        rec_layout.addWidget(self.rec_add_btn)
+        rec_outer = QVBoxLayout(self.rec_box)
+        rec_outer.setContentsMargins(15, 10, 15, 10)
+        rec_outer.setSpacing(6)
+
+        rec_header = QLabel("Рекомендации для вас")
+        rec_header.setStyleSheet("font-size: 13px; font-weight: 700; color: #ffffff;")
+        rec_outer.addWidget(rec_header)
+
+        self.rec_rows = []
+        for i in range(RecommendationFetcher.TARGET_COUNT):
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+
+            lbl = QLabel("Подбираем трек...")
+            lbl.setStyleSheet("font-size: 13px; font-weight: 500; color: {TEXT_MUTED};")
+
+            btn = QPushButton("+")
+            btn.setFixedSize(28, 28)
+            btn.setStyleSheet(
+                f"background-color: {BUTTON_BG}; border: 1px solid {BUTTON_BORDER}; "
+                f"font-weight: bold; font-size: 14px; padding:0;"
+            )
+            btn.clicked.connect(lambda _checked=False, idx=i: self.add_recommendation_to_playlist(idx))
+
+            row_layout.addWidget(lbl, stretch=1)
+            row_layout.addWidget(btn)
+            rec_outer.addWidget(row_widget)
+
+            self.rec_rows.append((lbl, btn, i))
+
+            btn.setEnabled(False)
 
         btn_layout = QHBoxLayout()
         add_btn = QPushButton("New Playlist")
@@ -1051,7 +1308,6 @@ class MusicPlayer(QMainWindow):
         add_btn.clicked.connect(self.create_playlist)
         remove_btn.clicked.connect(self.remove_playlist)
 
-        # ГЛОБАЛЬНЫЙ СТИЛЬ (ПЛОСКИЙ 2D И ТЕМНО-СИНИЙ АКЦЕНТ)
         self.setStyleSheet(f"""
             QMainWindow, QWidget {{ 
                 background-color: {BG_COLOR}; 
@@ -1117,42 +1373,75 @@ class MusicPlayer(QMainWindow):
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ background: none; height: 0; }}
         """)
 
-    def display_recommendation(self, artist, title):
-        self.rec_artist = artist
-        self.rec_title = title
-        self.rec_label.setText(f"Рекомендация: {artist} — {title}")
+    def display_recommendation(self, recommendations):
+        self.rec_data = recommendations or []
 
-    def add_recommendation_to_playlist(self):
-        if not self.rec_title:
+        if not self.rec_data:
+            for lbl, btn, _ in self.rec_rows:
+                lbl.setText("Добавьте трек в плейлист, чтобы получить рекомендацию.")
+                lbl.setStyleSheet(f"font-size: 13px; font-weight: 500; color: {TEXT_MUTED};")
+                btn.setEnabled(False)
             return
-            
+
+        for i, (lbl, btn, _idx) in enumerate(self.rec_rows):
+            if i < len(self.rec_data):
+                artist, title = self.rec_data[i]
+                lbl.setText(f"{artist} — {title}")
+                lbl.setStyleSheet("font-size: 13px; font-weight: 500; color: #ffffff;")
+                btn.setEnabled(True)
+            else:
+                lbl.setText("—")
+                lbl.setStyleSheet(f"font-size: 13px; font-weight: 500; color: {TEXT_MUTED};")
+                btn.setEnabled(False)
+
+    def refresh_recommendation(self):
+        if self.rec_thread.isRunning():
+            return
+        self.rec_thread.start()
+
+    def add_recommendation_to_playlist(self, row_index: int):
+        if not self.rec_data or row_index >= len(self.rec_data):
+            return
+        artist, title = self.rec_data[row_index]
+
         playlists = [self.playlist_list.item(i).text() for i in range(self.playlist_list.count())]
         if not playlists:
             QMessageBox.warning(self, "Упс", "Создай сначала хотя бы один плейлист.")
             return
 
         target, ok = QInputDialog.getItem(self, "Добавить рекомендацию", "Выберите плейлист:", playlists, 0, False)
-        if ok and target:
-            dest_dir = PLAYLISTS_PATH / target / "songs"
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            
-            query = f"{self.rec_artist} {self.rec_title}"
-            self.rec_label.setText("Добавление в фоновом режиме...")
-            self.rec_add_btn.setEnabled(False)
-            
-            self.bg_down = BackgroundDownloader(query, dest_dir)
-            self.bg_down.finished_signal.connect(lambda status, msg: self.on_rec_downloaded(status, msg, target))
-            self.bg_down.start()
+        if not (ok and target):
+            return
 
-    def on_rec_downloaded(self, status, msg, playlist_name):
-        self.rec_add_btn.setEnabled(True)
-        self.rec_label.setText(f"Рекомендация: {self.rec_artist} — {self.rec_title}")
+        dest_dir = PLAYLISTS_PATH / target / "songs"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        query = f"{artist} {title}"
+        lbl, btn, _ = self.rec_rows[row_index]
+        old_text = lbl.text()
+        lbl.setText(f"⏳ Добавляем: {old_text} ...")
+        lbl.setStyleSheet(f"font-size: 13px; font-weight: 500; color: {TEXT_MUTED};")
+        btn.setEnabled(False)
+
+        self.bg_down = BackgroundDownloader(query, dest_dir)
+        self.bg_down.finished_signal.connect(
+            lambda status, msg, name=target, ot=old_text, ri=row_index:
+                self.on_rec_downloaded(status, msg, name, ot, ri)
+        )
+        self.bg_down.start()
+
+    def on_rec_downloaded(self, status, msg, playlist_name, old_text, row_index):
         if status:
             QMessageBox.information(self, "Готово", f"Трек успешно стянут с SoundCloud в '{playlist_name}'!")
             if self.stack.currentIndex() == 1 and self.playlist_view.current_playlist == playlist_name:
                 self.playlist_view.update_songs_list()
+            self.refresh_recommendation()
         else:
-            QMessageBox.critical(self, "Ошибка скачивания", f"Не удалось загрузить: {msg}")
+            lbl, btn, _ = self.rec_rows[row_index]
+            lbl.setText(old_text)
+            lbl.setStyleSheet("font-size: 13px; font-weight: 500; color: #ffffff;")
+            btn.setEnabled(True)
+            QMessageBox.critical(self, "Ошибка скачивания", f"Не удалось загрузить:\n{msg}")
 
     def open_playlist(self, item):
         name = item.text()
@@ -1181,7 +1470,7 @@ class MusicPlayer(QMainWindow):
             shutil.rmtree(PLAYLISTS_PATH / name)
             (PLAYLISTS_PATH / f"{name}.json").unlink(missing_ok=True)
         except Exception as e:
-            print(f"[Remove error] {e}")
+            pass
         self.playlist_list.takeItem(self.playlist_list.row(item))
 
 
