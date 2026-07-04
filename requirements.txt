@@ -1,5 +1,3 @@
 pyside6
 yt-dlp
-ffmpeg.exe in dir with main file
-fonts (monsterrat)
-sub to @FinchReleases
+pypresence
