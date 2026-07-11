@@ -1,98 +1,90 @@
-from html.parser import HTMLParser
+import re
+from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
+from PySide6.QtCore import QByteArray, QRectF, Qt
+from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPixmap
+from PySide6.QtSvg import QSvgRenderer
 
-from config import SCRIPT_DIR, ICON_COLOR
-
-
-def format_time(ms: int) -> str:
-    s = ms // 1000
-    return f"{s // 60}:{s % 60:02d}"
+from config import ICON_COLOR, SCRIPT_DIR
 
 
-def extract_sc_meta(info: dict) -> dict:
-    """Extracts SoundCloud metadata using a strict priority chain."""
-    raw_title = info.get('title', 'Unknown Title')
-    uploader = info.get('uploader', 'Unknown Artist')
+def format_time(milliseconds):
+    seconds = max(0, int(milliseconds or 0) // 1000)
+    return f"{seconds // 60}:{seconds % 60:02d}"
 
-    artist = info.get('artist') or info.get('creator')
-    title = info.get('track')
 
-    if not artist or not title:
-        if " - " in raw_title:
-            parts = raw_title.split(" - ", 1)
-            artist = parts[0].strip()
-            title = parts[1].strip()
-        elif "-" in raw_title:
-            parts = raw_title.split("-", 1)
-            artist = parts[0].strip()
-            title = parts[1].strip()
-        else:
-            artist = artist or uploader
-            title = title or raw_title
-
-    duration = info.get('duration')
-    if isinstance(duration, (int, float)):
-        duration_str = format_time(int(duration * 1000))
-    else:
-        duration_str = info.get('duration_string', '??:??')
-
+def extract_sc_meta(info):
     return {
-        "artist": str(artist).strip(),
-        "title": str(title).strip(),
-        "duration": duration_str
+        "title": info.get("track") or info.get("title") or "Unknown Title",
+        "artist": info.get("artist") or info.get("uploader") or "Unknown Artist",
+        "album": info.get("album") or "",
+        "duration": info.get("duration_string") or "",
+        "cover_url": info.get("thumbnail") or "",
+        "source_url": info.get("webpage_url") or info.get("original_url") or "",
     }
 
 
-def colored_icon(filename, color=ICON_COLOR, size=64):
-    path = SCRIPT_DIR / filename
-    if not path.is_file():
-        return QIcon()
-
-    source = QPixmap(str(path))
-    if source.isNull():
-        return QIcon()
-
-    source = source.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-
-    colored = QPixmap(source.size())
-    colored.fill(Qt.transparent)
-
-    painter = QPainter(colored)
-    painter.drawPixmap(0, 0, source)
-    painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
-    painter.fillRect(colored.rect(), QColor(color))
+def rounded_cover_pixmap(source, size, radius):
+    if source is None:
+        return None
+    if isinstance(source, (str, Path)):
+        source = QPixmap(str(source))
+    if not isinstance(source, QPixmap) or source.isNull():
+        return None
+    scaled = source.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+    x = max(0, (scaled.width() - size) // 2)
+    y = max(0, (scaled.height() - size) // 2)
+    cropped = scaled.copy(x, y, size, size)
+    output = QPixmap(size, size)
+    output.fill(Qt.transparent)
+    painter = QPainter(output)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(0, 0, size, size), radius, radius)
+    painter.setClipPath(path)
+    painter.drawPixmap(0, 0, cropped)
     painter.end()
+    return output
 
-    return QIcon(colored)
+
+def _asset_path(filename):
+    """Support the user's actual flat project layout and an optional icons folder."""
+    filename = Path(filename).name
+    candidates = (
+        SCRIPT_DIR / filename,
+        SCRIPT_DIR / "icons" / filename,
+        Path.cwd() / filename,
+        Path.cwd() / "icons" / filename,
+    )
+    return next((path for path in candidates if path.is_file()), None)
 
 
-class GeniusLyricsParser(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.recording = False
-        self.lyrics = []
-        self.div_depth = 0
+def svg_icon(svg_text, color=ICON_COLOR, size=24):
+    # Handles SVGs using currentColor, hard-coded black/white, or CSS colors.
+    svg_text = svg_text.replace("currentColor", color)
+    svg_text = re.sub(r'(?i)(stroke|fill)="(?:#000000|#000|black|#ffffff|#fff|white)"',
+                      lambda match: f'{match.group(1)}="{color}"', svg_text)
+    renderer = QSvgRenderer(QByteArray(svg_text.encode("utf-8")))
+    if not renderer.isValid():
+        return QIcon()
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    renderer.render(painter)
+    painter.end()
+    return QIcon(pixmap)
 
-    def handle_starttag(self, tag, attrs):
-        attrs_dict = dict(attrs)
-        if attrs_dict.get('data-lyrics-container') == 'true':
-            self.recording = True
-            self.div_depth = 0
-        if self.recording:
-            if tag == 'div':
-                self.div_depth += 1
-            elif tag == 'br':
-                self.lyrics.append('\n')
 
-    def handle_endtag(self, tag):
-        if self.recording:
-            if tag == 'div':
-                self.div_depth -= 1
-                if self.div_depth <= 0:
-                    self.recording = False
-
-    def handle_data(self, data):
-        if self.recording:
-            self.lyrics.append(data)
+def colored_icon(filename, color=ICON_COLOR, size=24):
+    path = _asset_path(filename)
+    if path is None:
+        print(f"[Icon] Missing: {filename} (searched project root and icons folder)")
+        return QIcon()
+    try:
+        if path.suffix.lower() == ".svg":
+            return svg_icon(path.read_text(encoding="utf-8"), color, size)
+        return QIcon(str(path))
+    except Exception as exc:
+        print(f"[Icon] Failed to load {path}: {exc}")
+        return QIcon()
