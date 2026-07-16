@@ -253,5 +253,5 @@ class P2PSyncManager(QObject):
         try:
             await asyncio.wait_for(complete.wait(), timeout)
         except asyncio.TimeoutError:
-            # Keep the gathered candidates instead of killing the whole session.
+
             pass

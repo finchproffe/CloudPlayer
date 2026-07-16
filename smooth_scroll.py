@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QScrollArea
 
 
 class SmoothScrollArea(QScrollArea):
-    """QScrollArea with soft, accumulated Lenis-like inertial scrolling."""
+
 
     def __init__(
         self,
@@ -62,8 +62,8 @@ class SmoothScrollArea(QScrollArea):
             self._target_position = current_position
             self._velocity_boost = 1.0
 
-        # Fast wheel pulses build momentum. Reversing direction immediately
-        # releases it, so the control still feels precise.
+
+
         if direction != self._last_direction:
             self._target_position = current_position
             self._velocity_boost = 1.0
@@ -88,8 +88,8 @@ class SmoothScrollArea(QScrollArea):
             event.accept()
             return
 
-        # Restart from the exact current visual position and glide toward the
-        # accumulated destination. Longer distances float slightly longer.
+
+
         adaptive_duration = min(
             680,
             max(260, self._duration + int(distance * 0.16)),

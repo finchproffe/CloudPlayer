@@ -243,6 +243,16 @@ def update_paused():
     sync_now()
 
 
+def clear_activity():
+    global _last_payload
+    global _started_at
+
+    _last_payload = None
+    _started_at = None
+    if _running:
+        _commands.put(("clear", None))
+
+
 def close():
     global _view
     global _sync_timer

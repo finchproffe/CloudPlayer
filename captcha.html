@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CloudPlayer verification</title>
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #121212;
+    }
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: Arial, sans-serif;
+    }
+    #turnstile-container {
+      width: 100%;
+      min-height: 65px;
+    }
+  </style>
+  <script>
+    function notifyHost(path, value) {
+      const suffix = value ? "?value=" + encodeURIComponent(value) : "";
+      window.location.assign(path + suffix);
+    }
+
+    function onTurnstileLoad() {
+      turnstile.render("#turnstile-container", {
+        sitekey: __TURNSTILE_SITE_KEY_JSON__,
+        theme: "dark",
+        size: "flexible",
+        language: "en",
+        action: "account",
+        callback: function(token) {
+          notifyHost("/captcha-complete", token);
+        },
+        "expired-callback": function() {
+          notifyHost("/captcha-expired", "expired");
+        },
+        "timeout-callback": function() {
+          notifyHost("/captcha-expired", "timeout");
+        },
+        "error-callback": function(code) {
+          notifyHost("/captcha-error", String(code || "unknown"));
+          return true;
+        }
+      });
+    }
+  </script>
+  <script
+    src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&amp;onload=onTurnstileLoad"
+    defer></script>
+</head>
+<body>
+  <div id="turnstile-container" aria-label="Cloudflare verification"></div>
+</body>
+</html>

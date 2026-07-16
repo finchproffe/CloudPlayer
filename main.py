@@ -1,13 +1,11 @@
 import asyncio
-import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
-import urllib.parse
-import urllib.request
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,29 +13,42 @@ from font_config import setup_hidpi_scaling
 
 setup_hidpi_scaling()
 
-from PySide6.QtCore import QByteArray, QEasingCurve, QEvent, QObject, QPropertyAnimation, QRectF, QSize, QThread, QTimer, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QPainter, QPainterPath, QPixmap
+from PySide6.QtCore import QByteArray, QEasingCurve, QPropertyAnimation, QRectF, QSize, QTimer, Qt, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPainter, QPainterPath, QPixmap
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QGraphicsOpacityEffect, QHBoxLayout, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QProgressDialog, QPushButton, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QDialog, QFileDialog, QGraphicsOpacityEffect, QHBoxLayout, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QProgressDialog, QPushButton, QStackedWidget, QVBoxLayout, QWidget
 from qasync import QEventLoop, asyncClose
 
 from config import *
+from account_sync import (
+    AccountPanel,
+    CloudRequestWorker,
+    LoginDialog,
+    clear_account_session,
+    collect_playlist_tracks,
+    load_account_session,
+    local_playlist_urls,
+    save_account_session,
+)
+from app_updater import (
+    APP_VERSION, UPDATE_DOWNLOAD_PATH, ReleaseChecker, UpdateDialog,
+    UpdateDownloader, file_sha256, read_update_state, version_parts,
+    write_update_state,
+)
+from ui_polish import polish_tree
 from font_config import setup_application_fonts
 from group_sessions import GroupSessionWidget
 from hotkeys import GlobalHotkeyThread
-from p2p_sync_manager import P2PSyncManager
+from network_sync_manager import NetworkSyncManager
 from player_widgets import PlaylistView
 from recommendation_widgets import FlowLayout, RecommendationCard
 from smooth_scroll import SmoothScrollArea
 from threads import BackgroundDownloader, RecommendationFetcher, SearchWorker
 from utils import colored_icon, rounded_cover_pixmap
 import discord_rpc
+import config as config_module
+from settings_dialog import SettingsDialog
 
-APP_VERSION = "1.1.0"
-RELEASE_API_URL = "https://api.github.com/repos/finchproffe/CloudPlayer/releases/latest"
-UPDATE_STATE_PATH = DOCS_PATH / "update_state.json"
-UPDATE_DOWNLOAD_PATH = DOWNLOADS_PATH / "CloudPlayer.exe"
-FONT_WEIGHT = QFont.Weight.Bold
 MENU_ICON_SIZE = 28
 MENU_TEXT_SIZE = 14
 MENU_STYLE = f"""
@@ -52,8 +63,10 @@ GITHUB_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><pat
 TELEGRAM_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><path fill="#ffffff" d="M248 8C111.033 8 0 119.033 0 256s111.033 248 248 248 248-111.033 248-248S384.967 8 248 8zm114.124 169.466-40.7 191.817c-3.07 13.666-11.08 17.036-22.477 10.602l-62-45.74-29.905 28.768c-3.312 3.312-6.089 6.089-12.488 6.089l4.451-63.196 115.007-103.886c5.003-4.451-1.092-6.935-7.77-2.484l-142.124 89.467-61.2-19.123c-13.304-4.147-13.564-13.304 2.777-19.702l239.093-92.203c11.08-4.147 20.774 2.484 17.336 19.591z"/></svg>"""
 
 
-def make_menu(parent):
-    menu = QMenu(parent)
+def make_menu(_parent=None):
+
+
+    menu = QMenu()
     menu.setStyleSheet(MENU_STYLE)
     return menu
 
@@ -76,186 +89,6 @@ def make_svg_icon(source, logical_size=22):
     return QIcon(pixmap)
 
 
-def version_parts(value):
-    parts = [int(part) for part in re.findall(r"\d+", str(value))]
-    return tuple((parts + [0, 0, 0, 0])[:4])
-
-
-def write_update_state(data):
-    DOCS_PATH.mkdir(parents=True, exist_ok=True)
-    temporary = UPDATE_STATE_PATH.with_suffix(".tmp")
-    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    temporary.replace(UPDATE_STATE_PATH)
-
-
-def read_update_state():
-    if UPDATE_STATE_PATH.is_file():
-        try:
-            value = json.loads(UPDATE_STATE_PATH.read_text(encoding="utf-8"))
-            if isinstance(value, dict):
-                return value
-        except Exception:
-            pass
-    value = {
-        "first_run_date": datetime.now(timezone.utc).isoformat(),
-        "installed_version": APP_VERSION,
-        "last_check_date": None,
-        "latest_version": APP_VERSION,
-        "latest_release_date": None,
-        "downloaded_version": None,
-        "downloaded_path": None,
-        "acknowledged_version": APP_VERSION,
-    }
-    write_update_state(value)
-    return value
-
-
-def file_sha256(path):
-    digest = hashlib.sha256()
-    try:
-        with Path(path).open("rb") as source:
-            for chunk in iter(lambda: source.read(1024 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest().lower()
-    except Exception:
-        return ""
-
-
-class ReleaseChecker(QThread):
-    checked = Signal(object)
-    failed = Signal(str)
-
-    def run(self):
-        try:
-            request = urllib.request.Request(RELEASE_API_URL, headers={"Accept": "application/vnd.github+json", "User-Agent": f"CloudPlayer/{APP_VERSION}", "X-GitHub-Api-Version": "2022-11-28"})
-            with urllib.request.urlopen(request, timeout=12) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-            tag = str(payload.get("tag_name") or "").strip()
-            asset = next((item for item in payload.get("assets") or [] if str(item.get("name") or "").casefold() == "cloudplayer.exe"), None)
-            if not asset:
-                raise RuntimeError("CloudPlayer.exe is missing from the latest release")
-            url = str(asset.get("browser_download_url") or "")
-            parsed = urllib.parse.urlparse(url)
-            if parsed.scheme != "https" or parsed.hostname not in {"github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"}:
-                raise RuntimeError("The release contains an invalid download address")
-            digest = str(asset.get("digest") or "")
-            if not digest.lower().startswith("sha256:"):
-                raise RuntimeError("GitHub did not provide a SHA-256 digest")
-            size = int(asset.get("size") or 0)
-            if size <= 0 or size > 1024 * 1024 * 1024:
-                raise RuntimeError("The release file size is invalid")
-            self.checked.emit({"version": tag.lstrip("vV") or APP_VERSION, "published_at": payload.get("published_at"), "download_url": url, "sha256": digest.split(":", 1)[1].lower(), "size": size})
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-
-class UpdateDownloader(QThread):
-    progress = Signal(int)
-    completed = Signal(str)
-    failed = Signal(str)
-
-    def __init__(self, release, parent=None):
-        super().__init__(parent)
-        self.release = release
-
-    def run(self):
-        temporary = UPDATE_DOWNLOAD_PATH.with_suffix(".part")
-        try:
-            DOWNLOADS_PATH.mkdir(parents=True, exist_ok=True)
-            temporary.unlink(missing_ok=True)
-            UPDATE_DOWNLOAD_PATH.unlink(missing_ok=True)
-            request = urllib.request.Request(self.release["download_url"], headers={"User-Agent": f"CloudPlayer/{APP_VERSION}"})
-            digest = hashlib.sha256()
-            received = 0
-            expected = int(self.release["size"])
-            with urllib.request.urlopen(request, timeout=30) as response, temporary.open("wb") as output:
-                while True:
-                    if self.isInterruptionRequested():
-                        raise RuntimeError("Download canceled")
-                    chunk = response.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    received += len(chunk)
-                    if received > expected:
-                        raise RuntimeError("The downloaded file is too large")
-                    digest.update(chunk)
-                    output.write(chunk)
-                    self.progress.emit(min(100, round(received * 100 / expected)))
-            if received != expected:
-                raise RuntimeError("The downloaded file is incomplete")
-            if digest.hexdigest().lower() != self.release["sha256"]:
-                raise RuntimeError("SHA-256 verification failed")
-            temporary.replace(UPDATE_DOWNLOAD_PATH)
-            self.completed.emit(str(UPDATE_DOWNLOAD_PATH))
-        except Exception as exc:
-            temporary.unlink(missing_ok=True)
-            self.failed.emit(str(exc))
-
-
-class UpdateDialog(QDialog):
-    def __init__(self, release, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("CloudPlayer Update")
-        self.setModal(True)
-        self.setFixedWidth(430)
-        root = QVBoxLayout(self)
-        root.setContentsMargins(28, 28, 28, 24)
-        root.setSpacing(16)
-        title = QLabel("Доступна новая версия")
-        title.setStyleSheet("font-size:22px;font-weight:700;color:#ffffff")
-        text = QLabel(f"CloudPlayer {release['version']} готов к скачиванию.")
-        text.setWordWrap(True)
-        text.setStyleSheet(f"font-size:14px;color:{TEXT_MUTED}")
-        buttons = QHBoxLayout()
-        buttons.addStretch()
-        cancel = QPushButton("Отмена")
-        download = QPushButton("Скачать")
-        cancel.clicked.connect(self.reject)
-        download.clicked.connect(self.accept)
-        buttons.addWidget(cancel)
-        buttons.addWidget(download)
-        root.addWidget(title)
-        root.addWidget(text)
-        root.addLayout(buttons)
-
-
-def _polish(widget):
-    font = widget.font()
-    font.setWeight(FONT_WEIGHT)
-    font.setBold(True)
-    font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias | QFont.StyleStrategy.PreferQuality)
-    widget.setFont(font)
-    style = re.sub(r"font-weight\s*:\s*(?:bold|normal|[1-9]00)", "font-weight:700", widget.styleSheet(), flags=re.I)
-    if widget.metaObject().className() in {"TrackListItemWidget", "TrackRow"}:
-        widget.setAttribute(Qt.WA_StyledBackground, True)
-        widget.setAutoFillBackground(False)
-        style += ";background:transparent;border:none"
-        for child in widget.findChildren(QWidget):
-            child.setAutoFillBackground(False)
-            child.setStyleSheet(child.styleSheet() + ";background:transparent;border:none")
-    widget.setStyleSheet(style)
-
-
-class UiFilter(QObject):
-    def eventFilter(self, watched, event):
-        if event.type() == QEvent.ChildAdded and isinstance(event.child(), QWidget):
-            QTimer.singleShot(0, lambda child=event.child(): polish_tree(child))
-        return False
-
-
-_ui_filter = UiFilter()
-
-
-def polish_tree(root):
-    if not isinstance(root, QWidget):
-        return
-    _polish(root)
-    root.installEventFilter(_ui_filter)
-    for widget in root.findChildren(QWidget):
-        _polish(widget)
-        widget.installEventFilter(_ui_filter)
-
-
 class MusicPlayer(QMainWindow):
     PLAYLIST_COVER = 93
     PLAYLIST_GRID = QSize(124, 143)
@@ -269,6 +102,8 @@ class MusicPlayer(QMainWindow):
             self.setWindowIcon(QIcon(str(SCRIPT_DIR / "icon.ico")))
         self.workers = []
         self.rec_cards = []
+        self._active_download_keys = set()
+        self._download_progress_dialogs = {}
         self._animation = None
         self.release_checker = None
         self.update_downloader = None
@@ -276,8 +111,19 @@ class MusicPlayer(QMainWindow):
         self.update_state = read_update_state()
         self.latest_release = None
         self._manual_update_check = False
+        self.account_user = None
+        self._account_stats_worker = None
+        self._account_stats_refresh_pending = False
+        self._cloud_worker = None
+        self._cloud_progress = None
+        self._cloud_download_worker = None
+        self._cloud_load_queue = []
+        self._cloud_load_index = 0
+        self._cloud_load_failures = []
+        self._cloud_load_cancelled = False
         self._prepare_paths()
         self._build()
+        self._restore_account()
         self.load_playlists()
         self.refresh_recommendation()
         self._start_hotkeys()
@@ -288,7 +134,7 @@ class MusicPlayer(QMainWindow):
     def _build(self):
         self.stack = QStackedWidget()
         self.playlist_view = PlaylistView(self)
-        self.p2p = P2PSyncManager(self.playlist_view.player, self)
+        self.p2p = NetworkSyncManager(self.playlist_view.player, self)
         self.p2p.set_catalog_provider(self._track_catalog)
         self.p2p.catalog_received.connect(self._download_missing_tracks)
         self.group_view = GroupSessionWidget(self.p2p, self)
@@ -299,6 +145,9 @@ class MusicPlayer(QMainWindow):
         self.playlist_view.back_requested.connect(lambda: self._switch(0))
         self.group_view.back_requested.connect(lambda: self._switch(0))
         self.playlist_view.sync_requested.connect(self._send_sync)
+        self.playlist_view.playlist_updated.connect(
+            self.refresh_playlist_item
+        )
         self._style()
 
     def _home(self):
@@ -306,14 +155,33 @@ class MusicPlayer(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(34, 34, 34, 34)
         layout.setSpacing(10)
+        header = QHBoxLayout()
+        header.setSpacing(10)
         title = QLabel("Your Playlists")
-        title.setStyleSheet("font-size:28px;font-weight:700;margin-bottom:10px")
+        title.setStyleSheet("font-size:28px;font-weight:700")
+        account_title = QLabel("Account")
+        account_title.setMinimumWidth(260)
+        account_title.setStyleSheet("font-size:28px;font-weight:700")
+        header.addWidget(title, 2)
+        header.addWidget(account_title, 1)
+        header.setStretch(0, 2)
+        header.setStretch(1, 1)
+
+        content = QHBoxLayout()
+        content.setSpacing(10)
+        library = QWidget()
+        library_layout = QVBoxLayout(library)
+        library_layout.setContentsMargins(0, 0, 0, 0)
+        library_layout.setSpacing(10)
         self.playlist_list = QListWidget()
         self.playlist_list.setViewMode(QListWidget.IconMode)
         self.playlist_list.setIconSize(QSize(self.PLAYLIST_COVER, self.PLAYLIST_COVER))
         self.playlist_list.setGridSize(self.PLAYLIST_GRID)
         self.playlist_list.setResizeMode(QListWidget.Adjust)
         self.playlist_list.setMovement(QListWidget.Static)
+        self.playlist_list.setSelectionMode(
+            QAbstractItemView.ExtendedSelection
+        )
         self.playlist_list.setWrapping(True)
         self.playlist_list.setWordWrap(True)
         self.playlist_list.setUniformItemSizes(True)
@@ -333,22 +201,41 @@ class MusicPlayer(QMainWindow):
         actions = QHBoxLayout()
         new_playlist = QPushButton("New Playlist")
         remove_playlist = QPushButton("Remove Playlist")
-        search = QPushButton("Search SoundCloud")
+        search = QPushButton("Search")
         together = QPushButton("Listen Together")
         for button in (new_playlist, remove_playlist, search, together):
-            button.setFixedSize(170, 44)
+            button.setMinimumSize(130, 44)
+            button.setMaximumWidth(170)
             actions.addWidget(button)
         actions.addStretch()
         new_playlist.clicked.connect(self.create_playlist)
         remove_playlist.clicked.connect(self.remove_playlist)
         search.clicked.connect(self.run_search)
         together.clicked.connect(lambda: self._switch(2))
-        layout.addWidget(title)
-        layout.addWidget(self.playlist_list, 3)
-        layout.addWidget(self.rec_header)
-        layout.addWidget(self.rec_scroll)
-        layout.addSpacing(8)
-        layout.addLayout(actions)
+        library_layout.addWidget(self.playlist_list, 3)
+        library_layout.addWidget(self.rec_header)
+        library_layout.addWidget(self.rec_scroll)
+        library_layout.addSpacing(8)
+        library_layout.addLayout(actions)
+
+        self.account_panel = AccountPanel()
+        self.account_panel.login_requested.connect(self._show_login)
+        self.account_panel.synchronize_requested.connect(
+            self._synchronize_playlist
+        )
+        self.account_panel.load_requested.connect(self._load_cloud_playlist)
+        self.account_panel.unsync_requested.connect(
+            self._unsynchronize_tracks
+        )
+        self.account_panel.logout_requested.connect(self._logout)
+        content.addWidget(library, 2)
+        content.addWidget(self.account_panel, 1)
+        content.setStretch(0, 2)
+        content.setStretch(1, 1)
+        self.account_panel.setVisible(True)
+
+        layout.addLayout(header)
+        layout.addLayout(content, 1)
         layout.addLayout(self._social_layout())
         return page
 
@@ -356,6 +243,18 @@ class MusicPlayer(QMainWindow):
         row = QHBoxLayout()
         row.addStretch()
         style = f"QPushButton{{background:{BUTTON_BG};border:1px solid {BUTTON_BORDER};border-radius:8px;padding:0}}QPushButton:hover{{background:{BUTTON_HOVER};border-color:{ACCENT_COLOR}}}"
+        self.settings_button = QPushButton()
+        self.settings_button.setIcon(
+            colored_icon("settings.svg", "#ffffff", 22)
+        )
+        self.settings_button.setToolTip("Settings")
+        self.settings_button.setAccessibleName("Settings")
+        self.settings_button.clicked.connect(self._show_settings_dialog)
+        support = QPushButton()
+        support.setIcon(colored_icon("money.svg", "#ffffff", 22))
+        support.setToolTip("Support CloudPlayer")
+        support.setAccessibleName("Support CloudPlayer")
+        support.clicked.connect(self._show_donation_dialog)
         github = QPushButton()
         github.setIcon(make_svg_icon(GITHUB_SVG))
         github.setToolTip("Open GitHub")
@@ -368,13 +267,572 @@ class MusicPlayer(QMainWindow):
         self.download_button.setIcon(colored_icon("download.svg", "#ffffff", 22))
         self.download_button.setToolTip("Check for CloudPlayer updates")
         self.download_button.clicked.connect(self._manual_check_for_updates)
-        for button in (github, telegram, self.download_button):
+        for button in (
+            self.settings_button,
+            support,
+            github,
+            telegram,
+            self.download_button,
+        ):
             button.setFixedSize(42, 42)
             button.setIconSize(QSize(22, 22))
             button.setCursor(Qt.PointingHandCursor)
             button.setStyleSheet(style)
             row.addWidget(button)
+        self._donation_button = support
         return row
+
+    def _show_settings_dialog(self):
+        username = str((self.account_user or {}).get("username") or "")
+        dialog = SettingsDialog(
+            ACCENT_COLOR,
+            self,
+            account_username=username,
+        )
+        dialog.delete_account_requested.connect(
+            lambda: self._delete_account(dialog)
+        )
+        polish_tree(dialog)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        if not self._apply_accent_color(dialog.selected_color):
+            QMessageBox.warning(
+                self,
+                "Settings",
+                "The accent color could not be saved.",
+            )
+
+    def _delete_account(self, settings_dialog):
+        if not self.account_user:
+            return
+        if (
+            (self._cloud_worker and self._cloud_worker.isRunning())
+            or (
+                self._cloud_download_worker
+                and self._cloud_download_worker.isRunning()
+            )
+        ):
+            QMessageBox.information(
+                self,
+                "Delete Account",
+                "Wait for the current cloud operation to finish.",
+            )
+            return
+        username = self.account_user["username"]
+        if (
+            QMessageBox.question(
+                settings_dialog,
+                "Delete Account",
+                f"Permanently delete '{username}' and all synchronized "
+                "tracks? This cannot be undone.",
+            )
+            != QMessageBox.Yes
+        ):
+            return
+        user_id = self.account_user["id"]
+        self.account_user = None
+        self._account_stats_refresh_pending = False
+        clear_account_session()
+        self.account_panel.set_logged_out()
+        settings_dialog.reject()
+        self._start_cloud_request(
+            "delete_account",
+            (user_id,),
+            "Deleting account...",
+            self._delete_account_finished,
+        )
+
+    def _delete_account_finished(self, ok, result):
+        if not ok or result is not True:
+            QMessageBox.critical(
+                self,
+                "Delete Account",
+                f"You were signed out, but Supabase deletion failed:\n{result}",
+            )
+            return
+        QMessageBox.information(
+            self,
+            "Delete Account",
+            "Your account and synchronized tracks were deleted.",
+        )
+
+    def _apply_accent_color(self, color):
+        global ACCENT_COLOR
+
+        old_color = str(ACCENT_COLOR)
+        new_color = config_module.save_accent_color(color)
+        if not new_color:
+            return False
+        ACCENT_COLOR = new_color
+        if old_color.casefold() == new_color.casefold():
+            return True
+
+        color_pattern = re.compile(re.escape(old_color), re.IGNORECASE)
+        project_root = SCRIPT_DIR.resolve()
+        for module in list(sys.modules.values()):
+            module_file = getattr(module, "__file__", None)
+            if not module_file:
+                continue
+            try:
+                module_path = Path(module_file).resolve()
+            except (OSError, TypeError):
+                continue
+            if project_root != module_path.parent and project_root not in module_path.parents:
+                continue
+            namespace = vars(module)
+            if "ACCENT_COLOR" in namespace:
+                namespace["ACCENT_COLOR"] = new_color
+            for name, value in list(namespace.items()):
+                if (
+                    not name.isupper()
+                    or name.startswith("DEFAULT_")
+                    or not isinstance(value, str)
+                    or not color_pattern.search(value)
+                ):
+                    continue
+                namespace[name] = color_pattern.sub(new_color, value)
+
+        for widget in QApplication.allWidgets():
+            style = widget.styleSheet()
+            if not style or not color_pattern.search(style):
+                continue
+            widget.setStyleSheet(color_pattern.sub(new_color, style))
+            widget.update()
+
+        self._style()
+        polish_tree(self)
+        self.update()
+        return True
+
+    def _show_donation_dialog(self):
+        from dialogs import DonationDialog
+
+        if not getattr(self, "_donation_dialog", None):
+            self._donation_dialog = DonationDialog(self)
+        self._donation_dialog.show()
+        self._donation_dialog.raise_()
+        self._donation_dialog.activateWindow()
+
+    def _show_login(self):
+        if self.account_user:
+            return
+        dialog = LoginDialog(self)
+        polish_tree(dialog)
+        if dialog.exec() == QDialog.Accepted and dialog.authenticated_user:
+            self._account_authenticated(dialog.authenticated_user)
+
+    def _account_authenticated(self, user):
+        self.account_user = {
+            "id": str(user.get("id") or ""),
+            "username": str(user.get("username") or ""),
+        }
+        self.account_panel.set_user(self.account_user)
+        self.account_panel.set_song_count(None)
+        self.account_panel.set_tracks([])
+        self.account_panel.setVisible(True)
+        self.account_panel.updateGeometry()
+        self.account_panel.update()
+        if self.home_view.layout():
+            self.home_view.layout().activate()
+        polish_tree(self.account_panel)
+        save_account_session(self.account_user)
+        self._refresh_account_stats()
+
+    def _restore_account(self):
+        user = load_account_session()
+        if user:
+            self._account_authenticated(user)
+
+    def _refresh_account_stats(self):
+        if not self.account_user:
+            return
+        if self._account_stats_worker is not None:
+            self._account_stats_refresh_pending = True
+            return
+        user_id = self.account_user["id"]
+        self._account_stats_refresh_pending = False
+        worker = CloudRequestWorker("load_links", user_id, parent=self)
+        self._account_stats_worker = worker
+        worker.completed.connect(
+            lambda ok, result, current=worker, owner=user_id: (
+                self._account_stats_loaded(current, owner, ok, result)
+            )
+        )
+        worker.finished.connect(
+            lambda current=worker: self._account_stats_worker_finished(current)
+        )
+        worker.start()
+
+    def _account_stats_loaded(self, worker, user_id, ok, result):
+        if worker is not self._account_stats_worker:
+            return
+        self._account_stats_worker = None
+        if not self.account_user or self.account_user["id"] != user_id:
+            return
+        if self._account_stats_refresh_pending:
+            QTimer.singleShot(0, self._refresh_account_stats)
+            return
+        rows = result if ok and isinstance(result, list) else []
+        self.account_panel.set_song_count(len(rows) if ok else None)
+        self.account_panel.set_tracks(rows)
+
+    def _account_stats_worker_finished(self, worker):
+        worker.deleteLater()
+
+    def _logout(self):
+        if self._cloud_worker and self._cloud_worker.isRunning():
+            QMessageBox.information(
+                self,
+                "Cloud Sync",
+                "Wait for the current cloud operation to finish.",
+            )
+            return
+        if self._cloud_download_worker and self._cloud_download_worker.isRunning():
+            QMessageBox.information(
+                self,
+                "Cloud Sync",
+                "Cancel or finish the current playlist download first.",
+            )
+            return
+        self.account_user = None
+        self._account_stats_refresh_pending = False
+        clear_account_session()
+        self.account_panel.set_logged_out()
+
+    def _playlist_names(self):
+        return [
+            str(self.playlist_list.item(index).data(Qt.UserRole))
+            for index in range(self.playlist_list.count())
+        ]
+
+    def _choose_playlist(self, title, label, names):
+        if not names:
+            return None
+        current_name = (
+            str(self.playlist_list.currentItem().data(Qt.UserRole))
+            if self.playlist_list.currentItem()
+            else ""
+        )
+        current = names.index(current_name) if current_name in names else 0
+        chosen, accepted = QInputDialog.getItem(
+            self, title, label, names, current, False
+        )
+        return str(chosen) if accepted and chosen else None
+
+    def _start_cloud_request(self, operation, arguments, label, callback):
+        if (
+            (self._cloud_worker and self._cloud_worker.isRunning())
+            or (
+                self._cloud_download_worker
+                and self._cloud_download_worker.isRunning()
+            )
+        ):
+            return
+        self.account_panel.set_busy(True)
+        progress = QProgressDialog(label, "", 0, 0, self)
+        progress.setWindowTitle("Cloud Sync")
+        progress.setCancelButton(None)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        self._cloud_progress = progress
+        worker = CloudRequestWorker(operation, *arguments, parent=self)
+        self._cloud_worker = worker
+        worker.completed.connect(
+            lambda ok, result, current=worker: self._cloud_request_done(
+                current, callback, ok, result
+            )
+        )
+        worker.finished.connect(worker.deleteLater)
+        polish_tree(progress)
+        progress.show()
+        worker.start()
+
+    def _cloud_request_done(self, worker, callback, ok, result):
+        if worker is not self._cloud_worker:
+            return
+        self._cloud_worker = None
+        if self._cloud_progress:
+            self._cloud_progress.close()
+            self._cloud_progress.deleteLater()
+            self._cloud_progress = None
+        self.account_panel.set_busy(False)
+        callback(ok, result)
+
+    def _synchronize_playlist(self):
+        if not self.account_user:
+            self._show_login()
+            return
+        playlist = self._choose_playlist(
+            "Synchronize Playlist",
+            "Playlist to synchronize:",
+            self._playlist_names(),
+        )
+        if not playlist:
+            return
+        tracks, without_url = collect_playlist_tracks(playlist)
+        if not tracks:
+            message = "This playlist has no downloadable track links."
+            if without_url:
+                message += " Local files cannot be synchronized."
+            QMessageBox.information(self, "Cloud Sync", message)
+            return
+        self._sync_without_url = without_url
+        self._start_cloud_request(
+            "synchronize",
+            (self.account_user["id"], tracks),
+            f"Synchronizing {playlist}...",
+            self._synchronize_finished,
+        )
+
+    def _synchronize_finished(self, ok, result):
+        if not ok:
+            QMessageBox.critical(self, "Cloud Sync", str(result))
+            return
+        inserted = int(result.get("inserted") or 0)
+        existing = int(result.get("already_synced") or 0)
+        skipped = int(getattr(self, "_sync_without_url", 0) or 0)
+        synchronized_links = result.get("links")
+        if isinstance(synchronized_links, list):
+            self.account_panel.set_song_count(
+                int(result.get("total_synced") or len(synchronized_links))
+            )
+            self.account_panel.set_tracks(synchronized_links)
+        else:
+            self.account_panel.set_song_count(
+                self.account_panel.song_count + inserted
+            )
+        parts = [
+            f"Added: {inserted}",
+            f"Already synchronized: {existing}",
+        ]
+        if skipped:
+            parts.append(f"Skipped local files without a source link: {skipped}")
+        self._refresh_account_stats()
+        QMessageBox.information(self, "Cloud Sync", "\n".join(parts))
+
+    def _unsynchronize_tracks(self, rows):
+        if not self.account_user:
+            return
+        link_ids = [
+            row.get("id")
+            for row in rows or []
+            if isinstance(row, dict) and row.get("id") is not None
+        ]
+        if not link_ids:
+            return
+        count = len(link_ids)
+        description = (
+            "this synchronized track"
+            if count == 1
+            else f"these {count} synchronized tracks"
+        )
+        if (
+            QMessageBox.question(
+                self,
+                "Unsync",
+                f"Unsync {description}?",
+            )
+            != QMessageBox.Yes
+        ):
+            return
+        self._start_cloud_request(
+            "unsynchronize",
+            (self.account_user["id"], link_ids),
+            f"Unsyncing {count} track(s)...",
+            self._unsynchronize_finished,
+        )
+
+    def _unsynchronize_finished(self, ok, result):
+        if not ok:
+            QMessageBox.critical(self, "Unsync", str(result))
+            return
+        rows = result if isinstance(result, list) else []
+        self.account_panel.set_song_count(len(rows))
+        self.account_panel.set_tracks(rows)
+        self._refresh_account_stats()
+
+    def _load_cloud_playlist(self):
+        if not self.account_user:
+            self._show_login()
+            return
+        self._start_cloud_request(
+            "load_links",
+            (self.account_user["id"],),
+            "Loading synchronized playlists...",
+            self._cloud_links_loaded,
+        )
+
+    def _cloud_links_loaded(self, ok, result):
+        if not ok:
+            QMessageBox.critical(self, "Cloud Sync", str(result))
+            return
+        self.account_panel.set_song_count(len(result))
+        self.account_panel.set_tracks(result)
+        rows = [row for row in result if isinstance(row, dict) and row.get("url")]
+        if not rows:
+            QMessageBox.information(
+                self, "Cloud Sync", "There are no synchronized tracks yet."
+            )
+            return
+        playlist_names = sorted(
+            {
+                str(row.get("playlist_name") or "Cloud Playlist")
+                for row in rows
+            },
+            key=str.casefold,
+        )
+        selected = self._choose_playlist(
+            "Load Playlist",
+            "Synchronized playlist to download:",
+            playlist_names,
+        )
+        if not selected:
+            return
+        destination = self._ensure_playlist(selected)
+        existing_urls = local_playlist_urls(destination)
+        seen = set(existing_urls)
+        queue = []
+        for row in rows:
+            remote_playlist = str(row.get("playlist_name") or "Cloud Playlist")
+            url = str(row.get("url") or "").strip()
+            if remote_playlist != selected or not url or url in seen:
+                continue
+            seen.add(url)
+            queue.append(row)
+        if not queue:
+            QMessageBox.information(
+                self,
+                "Cloud Sync",
+                "All tracks from this playlist are already downloaded.",
+            )
+            return
+        self._cloud_load_playlist = destination
+        self._cloud_load_queue = queue
+        self._cloud_load_index = 0
+        self._cloud_load_failures = []
+        self._cloud_load_cancelled = False
+        self.account_panel.set_busy(True)
+        progress = QProgressDialog(
+            "Preparing playlist download...", "Cancel", 0, 100, self
+        )
+        progress.setWindowTitle("Loading Playlist")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.canceled.connect(self._cancel_cloud_load)
+        self._cloud_progress = progress
+        polish_tree(progress)
+        progress.show()
+        self._start_next_cloud_track()
+
+    def _cancel_cloud_load(self):
+        self._cloud_load_cancelled = True
+        if self._cloud_progress:
+            self._cloud_progress.setLabelText(
+                "Cancelling after the current track..."
+            )
+
+    def _start_next_cloud_track(self):
+        if self._cloud_load_cancelled:
+            self._finish_cloud_load(cancelled=True)
+            return
+        if self._cloud_load_index >= len(self._cloud_load_queue):
+            self._finish_cloud_load()
+            return
+        row = self._cloud_load_queue[self._cloud_load_index]
+        worker = BackgroundDownloader(
+            row["url"],
+            PLAYLISTS_PATH / self._cloud_load_playlist / "songs",
+            self,
+        )
+        self._cloud_download_worker = worker
+        self.workers.append(worker)
+        worker.progress_signal.connect(
+            lambda percent, status, current=worker: self._cloud_track_progress(
+                current, percent, status
+            )
+        )
+        worker.finished_signal.connect(
+            lambda ok, message, current=worker: self._cloud_track_done(
+                current, ok, message
+            )
+        )
+        worker.start()
+
+    def _cloud_track_progress(self, worker, percent, status):
+        if worker is not self._cloud_download_worker or not self._cloud_progress:
+            return
+        total = max(1, len(self._cloud_load_queue))
+        track_number = self._cloud_load_index + 1
+        row = self._cloud_load_queue[self._cloud_load_index]
+        title = str(row.get("song_title") or "Track")
+        self._cloud_progress.setLabelText(
+            f"{track_number}/{total} — {title}\n{status}"
+        )
+        track_percent = max(0, min(100, int(percent or 0)))
+        overall = round(
+            (self._cloud_load_index + track_percent / 100) * 100 / total
+        )
+        self._cloud_progress.setValue(overall)
+
+    def _cloud_track_done(self, worker, ok, message):
+        if worker in self.workers:
+            self.workers.remove(worker)
+        if worker is not self._cloud_download_worker:
+            return
+        self._cloud_download_worker = None
+        if not ok:
+            row = self._cloud_load_queue[self._cloud_load_index]
+            self._cloud_load_failures.append(
+                (str(row.get("song_title") or row.get("url")), str(message))
+            )
+        self._cloud_load_index += 1
+        if self._cloud_progress:
+            self._cloud_progress.setValue(
+                round(
+                    self._cloud_load_index
+                    * 100
+                    / max(1, len(self._cloud_load_queue))
+                )
+            )
+        QTimer.singleShot(0, self._start_next_cloud_track)
+
+    def _finish_cloud_load(self, cancelled=False):
+        downloaded = self._cloud_load_index - len(self._cloud_load_failures)
+        total = len(self._cloud_load_queue)
+        playlist = getattr(self, "_cloud_load_playlist", "")
+        if self._cloud_progress:
+            self._cloud_progress.close()
+            self._cloud_progress.deleteLater()
+            self._cloud_progress = None
+        if playlist:
+            self.refresh_playlist_item(playlist)
+        self.account_panel.set_busy(False)
+        self._cloud_load_queue = []
+        if cancelled:
+            QMessageBox.information(
+                self,
+                "Cloud Sync",
+                f"Download cancelled. Completed: {downloaded}/{total}.",
+            )
+        elif self._cloud_load_failures:
+            first_title, first_error = self._cloud_load_failures[0]
+            QMessageBox.warning(
+                self,
+                "Cloud Sync",
+                f"Downloaded: {downloaded}/{total}.\n"
+                f"Failed: {len(self._cloud_load_failures)}.\n"
+                f"First error ({first_title}): {first_error[:220]}",
+            )
+        else:
+            QMessageBox.information(
+                self,
+                "Cloud Sync",
+                f"Downloaded {downloaded} tracks to {playlist}.",
+            )
 
     def _release_is_downloaded(self, release):
         return self.update_state.get("downloaded_version") == release["version"] and UPDATE_DOWNLOAD_PATH.is_file() and UPDATE_DOWNLOAD_PATH.stat().st_size == release["size"] and file_sha256(UPDATE_DOWNLOAD_PATH) == release["sha256"]
@@ -401,7 +859,7 @@ class MusicPlayer(QMainWindow):
         write_update_state(self.update_state)
         if self._release_is_acknowledged(release):
             if self._manual_update_check:
-                QMessageBox.information(self, "CloudPlayer Update", "У вас установлена последняя версия.")
+                QMessageBox.information(self, "CloudPlayer Update", "You have the latest version installed.")
         elif self._release_is_downloaded(release):
             if self._manual_update_check:
                 self._open_download_folder(UPDATE_DOWNLOAD_PATH)
@@ -411,7 +869,7 @@ class MusicPlayer(QMainWindow):
 
     def _update_check_failed(self, message):
         if self._manual_update_check:
-            QMessageBox.warning(self, "CloudPlayer Update", f"Не удалось проверить обновления.\n{message[:220]}")
+            QMessageBox.warning(self, "CloudPlayer Update", f"Could not check for updates.\n{message[:220]}")
         self._manual_update_check = False
 
     def _show_update_dialog(self, release):
@@ -423,7 +881,7 @@ class MusicPlayer(QMainWindow):
     def _download_update(self, release):
         if self.update_downloader and self.update_downloader.isRunning():
             return
-        self.update_progress = QProgressDialog("Скачивание и проверка обновления...", "Отмена", 0, 100, self)
+        self.update_progress = QProgressDialog("Downloading and verifying the update...", "Cancel", 0, 100, self)
         self.update_progress.setWindowModality(Qt.WindowModal)
         self.update_downloader = UpdateDownloader(release, self)
         self.update_downloader.progress.connect(self.update_progress.setValue)
@@ -444,7 +902,7 @@ class MusicPlayer(QMainWindow):
         if self.update_progress:
             self.update_progress.close()
         if message != "Download canceled":
-            QMessageBox.critical(self, "CloudPlayer Update", f"Обновление не скачано.\n{message[:240]}")
+            QMessageBox.critical(self, "CloudPlayer Update", f"The update was not downloaded.\n{message[:240]}")
 
     def _open_download_folder(self, filename):
         path = Path(filename).resolve()
@@ -481,6 +939,8 @@ class MusicPlayer(QMainWindow):
         DOCS_PATH.mkdir(parents=True, exist_ok=True)
         DOWNLOADS_PATH.mkdir(exist_ok=True)
         PLAYLISTS_PATH.mkdir(exist_ok=True)
+        TEMP_PATH.mkdir(exist_ok=True)
+        LYRICS_CACHE_PATH.mkdir(exist_ok=True)
 
     def _switch(self, index):
         if self.stack.currentIndex() == index:
@@ -523,21 +983,14 @@ class MusicPlayer(QMainWindow):
         return rows
 
     def _download_missing_tracks(self, catalog):
-        existing = set()
-        for sidecar in PLAYLISTS_PATH.glob("*/songs/*.json"):
-            try:
-                data = json.loads(sidecar.read_text(encoding="utf-8"))
-                existing.add(str(data.get("source_url") or data.get("download_url") or ""))
-            except Exception:
-                pass
-        missing = [track for track in catalog if str(track.get("source_url") or "") not in existing]
-        for track in missing:
-            playlist = str(track.get("playlist") or "Listen Together")
-            self._ensure_playlist(playlist)
-            worker = BackgroundDownloader(track["source_url"], PLAYLISTS_PATH / playlist / "songs", self)
-            self.workers.append(worker)
-            worker.finished_signal.connect(lambda ok, message, current=worker, name=playlist: self._sync_download_done(ok, message, current, name))
-            worker.start()
+
+
+        self._room_catalog = [
+            dict(track) for track in catalog if isinstance(track, dict)
+        ]
+        self.group_view.status.setText(
+            "Catalog received. Tracks will stream and cache on demand."
+        )
 
     def _sync_download_done(self, ok, message, worker, playlist):
         if worker in self.workers:
@@ -607,19 +1060,77 @@ class MusicPlayer(QMainWindow):
 
     def _download_recommendation(self, recommendation, card, playlist, autoplay):
         self._ensure_playlist(playlist)
-        if card:
-            card.set_loading(True)
         query = recommendation.get("source_url") or recommendation.get("url") or f"{recommendation.get('artist', '')} {recommendation.get('title', '')}"
+        key = str(query).strip().casefold()
+        if key in self._active_download_keys:
+            return
+        self._active_download_keys.add(key)
+        if card:
+            self._remove_recommendation_card(card)
         worker = BackgroundDownloader(query, PLAYLISTS_PATH / playlist / "songs", self)
         self.workers.append(worker)
-        worker.finished_signal.connect(lambda ok, message, current=worker: self._recommendation_done(ok, message, current, card, playlist, autoplay))
+        progress = QProgressDialog(
+            "Preparing download...", "", 0, 100, self
+        )
+        progress.setWindowTitle("Downloading Track")
+        progress.setCancelButton(None)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setRange(0, 0)
+        self._download_progress_dialogs[worker] = progress
+        worker.progress_signal.connect(
+            lambda percent, status, dialog=progress: self._set_download_progress(
+                dialog, percent, status
+            )
+        )
+        worker.finished_signal.connect(
+            lambda ok, message, current=worker: self._recommendation_done(
+                ok,
+                message,
+                current,
+                key,
+                playlist,
+                autoplay,
+            )
+        )
+        polish_tree(progress)
+        progress.show()
         worker.start()
 
-    def _recommendation_done(self, ok, message, worker, card, playlist, autoplay):
+    def _remove_recommendation_card(self, card):
+        for index in range(self.rec_flow.count()):
+            item = self.rec_flow.itemAt(index)
+            if item and item.widget() is card:
+                self.rec_flow.takeAt(index)
+                break
+        if card in self.rec_cards:
+            self.rec_cards.remove(card)
+        card.hide()
+        card.deleteLater()
+        self.rec_container.updateGeometry()
+
+    @staticmethod
+    def _set_download_progress(dialog, percent, status):
+        dialog.setLabelText(status)
+        if percent <= 0:
+            dialog.setRange(0, 0)
+            return
+        if dialog.maximum() == 0:
+            dialog.setRange(0, 100)
+        dialog.setValue(percent)
+
+    def _recommendation_done(
+        self, ok, message, worker, key, playlist, autoplay
+    ):
         if worker in self.workers:
             self.workers.remove(worker)
-        if card:
-            card.set_loading(False)
+        self._active_download_keys.discard(key)
+        progress = self._download_progress_dialogs.pop(worker, None)
+        if progress:
+            progress.close()
+            progress.deleteLater()
         self.refresh_playlist_item(playlist)
         if not ok:
             QMessageBox.critical(self, "SoundCloud Download Error", message)
@@ -639,6 +1150,7 @@ class MusicPlayer(QMainWindow):
             item.setData(Qt.UserRole, name)
             self.playlist_list.addItem(item)
             self._refresh_playlist_item(item)
+        return name
 
     def create_playlist(self):
         name, accepted = QInputDialog.getText(self, "New Playlist", "Name:")
@@ -708,7 +1220,11 @@ class MusicPlayer(QMainWindow):
         item = self.playlist_list.itemAt(position)
         if not item:
             return
-        self.playlist_list.setCurrentItem(item)
+        if not item.isSelected():
+            self.playlist_list.clearSelection()
+            item.setSelected(True)
+        items = self.playlist_list.selectedItems()
+        single_selection = len(items) == 1
         name = item.data(Qt.UserRole)
         menu = make_menu(self)
         open_action = menu.addAction("Open")
@@ -716,6 +1232,8 @@ class MusicPlayer(QMainWindow):
         reset_cover = menu.addAction("Reset to Auto")
         menu.addSeparator()
         remove_action = menu.addAction("Remove Playlist")
+        open_action.setEnabled(single_selection)
+        set_cover.setEnabled(single_selection)
         chosen = menu.exec(self.playlist_list.viewport().mapToGlobal(position))
         if chosen is open_action:
             self.open_playlist(item)
@@ -726,29 +1244,96 @@ class MusicPlayer(QMainWindow):
                 shutil.copy2(filename, PLAYLISTS_PATH / name / f"cover{Path(filename).suffix.lower()}")
                 self._refresh_playlist_item(item)
         elif chosen is reset_cover:
-            self._reset_cover(name)
-            self._refresh_playlist_item(item)
+            for selected in items:
+                selected_name = selected.data(Qt.UserRole)
+                self._reset_cover(selected_name)
+                self._refresh_playlist_item(selected)
         elif chosen is remove_action:
-            self.remove_playlist()
+            self.remove_playlist(items)
 
     @staticmethod
     def _reset_cover(name):
         for extension in (".jpg", ".jpeg", ".png", ".webp"):
             (PLAYLISTS_PATH / name / f"cover{extension}").unlink(missing_ok=True)
 
-    def remove_playlist(self):
-        item = self.playlist_list.currentItem()
-        if not item:
+    def remove_playlist(self, items=None):
+        items = list(items or self.playlist_list.selectedItems())
+        if not items and self.playlist_list.currentItem():
+            items = [self.playlist_list.currentItem()]
+        if not items:
             return
-        name = item.data(Qt.UserRole)
-        if QMessageBox.question(self, "Remove Playlist", f"Remove '{name}' and its tracks?") != QMessageBox.Yes:
+        names = [str(item.data(Qt.UserRole)) for item in items]
+        prompt = (
+            f"Remove '{names[0]}' and its tracks?"
+            if len(names) == 1
+            else f"Remove {len(names)} selected playlists and all their tracks?"
+        )
+        if QMessageBox.question(self, "Remove Playlist", prompt) != QMessageBox.Yes:
             return
-        shutil.rmtree(PLAYLISTS_PATH / name, ignore_errors=True)
-        (PLAYLISTS_PATH / f"{name}.json").unlink(missing_ok=True)
-        self.playlist_list.takeItem(self.playlist_list.row(item))
+        failures = []
+        for item, name in zip(items, names):
+            self.playlist_view.release_playlist(name)
+            folder = PLAYLISTS_PATH / name
+            try:
+                self._remove_tree(folder)
+                (PLAYLISTS_PATH / f"{name}.json").unlink(missing_ok=True)
+            except OSError as exc:
+                failures.append(f"{name}: {exc}")
+                continue
+            self.playlist_list.takeItem(self.playlist_list.row(item))
+        if failures:
+            QMessageBox.critical(
+                self,
+                "Remove Playlist",
+                "Some playlists could not be removed:\n"
+                + "\n".join(failures[:3]),
+            )
+
+    @staticmethod
+    def _remove_tree(folder):
+        if not folder.exists():
+            return
+        last_error = None
+        for _attempt in range(5):
+            try:
+                shutil.rmtree(folder)
+                return
+            except PermissionError as exc:
+                last_error = exc
+                QApplication.processEvents()
+                time.sleep(0.04)
+        if last_error:
+            raise last_error
 
     @asyncClose
     async def closeEvent(self, event):
+        cloud_request_running = (
+            self._cloud_worker and self._cloud_worker.isRunning()
+        )
+        cloud_download_running = (
+            self._cloud_download_worker
+            and self._cloud_download_worker.isRunning()
+        )
+        stats_request_running = (
+            self._account_stats_worker
+            and self._account_stats_worker.isRunning()
+        )
+        if (
+            cloud_request_running
+            or cloud_download_running
+            or stats_request_running
+        ):
+            if cloud_download_running:
+                self._cloud_load_cancelled = True
+            QMessageBox.information(
+                self,
+                "Cloud Sync",
+                "Cloud sync is still running. It will be safe to close "
+                "after the current track or request finishes.",
+            )
+            event.ignore()
+            return
+        self.playlist_view.persist_volume()
         self.hotkeys.stop()
         self.hotkeys.wait(1000)
         if self.release_checker and self.release_checker.isRunning():

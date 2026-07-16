@@ -31,10 +31,9 @@ def rounded_cover_pixmap(source, size, radius):
         source = QPixmap(str(source))
     if not isinstance(source, QPixmap) or source.isNull():
         return None
-    scaled = source.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-    x = max(0, (scaled.width() - size) // 2)
-    y = max(0, (scaled.height() - size) // 2)
-    cropped = scaled.copy(x, y, size, size)
+
+
+    scaled = source.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
     output = QPixmap(size, size)
     output.fill(Qt.transparent)
     painter = QPainter(output)
@@ -42,13 +41,17 @@ def rounded_cover_pixmap(source, size, radius):
     path = QPainterPath()
     path.addRoundedRect(QRectF(0, 0, size, size), radius, radius)
     painter.setClipPath(path)
-    painter.drawPixmap(0, 0, cropped)
+    painter.drawPixmap(
+        (size - scaled.width()) // 2,
+        (size - scaled.height()) // 2,
+        scaled,
+    )
     painter.end()
     return output
 
 
 def _asset_path(filename):
-    """Support the user's actual flat project layout and an optional icons folder."""
+
     filename = Path(filename).name
     candidates = (
         SCRIPT_DIR / filename,
@@ -60,7 +63,7 @@ def _asset_path(filename):
 
 
 def svg_icon(svg_text, color=ICON_COLOR, size=24):
-    # Handles SVGs using currentColor, hard-coded black/white, or CSS colors.
+
     svg_text = svg_text.replace("currentColor", color)
     svg_text = re.sub(r'(?i)(stroke|fill)="(?:#000000|#000|black|#ffffff|#fff|white)"',
                       lambda match: f'{match.group(1)}="{color}"', svg_text)

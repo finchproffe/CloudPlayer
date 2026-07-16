@@ -1,3 +1,6 @@
 pyside6
 yt-dlp
 pypresence
+qasync
+keyboard
+requests
