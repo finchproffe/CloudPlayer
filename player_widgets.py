@@ -20,7 +20,7 @@ from utils import colored_icon, format_time, rounded_cover_pixmap
 import discord_rpc
 from playlist_components import (
     BoundedSongList, BufferedPositionSlider, CoverPreviewDialog,
-    DirectJumpSlider, TrackListItemWidget,
+    DirectJumpSlider,
 )
 from playlist_storage import PlaylistStorageMixin
 from playlist_actions import PlaylistActionsMixin
@@ -74,6 +74,7 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
         self._network_manager = None
         self._prepared_paths = {}
         self._active_room_request = None
+        self._ensure_storage_state()
         self._build()
 
     def set_network_manager(self, manager):
@@ -147,6 +148,7 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
 
         center = QHBoxLayout()
         self.songs_list = BoundedSongList()
+        self.install_track_delegate()
         self.songs_list.setUniformItemSizes(True)
         self.songs_list.setVerticalScrollMode(
             QAbstractItemView.ScrollPerPixel
@@ -331,8 +333,11 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
 
     def leave_playlist(self):
         self.reset_current_track()
+        self.cancel_playlist_loading()
         self.current_playlist = None
         self.current_playlist_path = None
+        self._playlist_order = []
+        self._row_by_filename = {}
         self.playlist_name.setText("Playlist")
         self.songs_list.clear()
         self._order_undo_stack.clear()
@@ -371,6 +376,7 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
         return False
 
     def release_playlist(self, name):
+        self.forget_playlist(name)
         folder = PLAYLISTS_PATH / str(name) / "songs"
         if self.current_track_path is not None:
             try:
@@ -382,8 +388,11 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
             return
         if self.player.source().isValid():
             self.reset_current_track()
+        self.cancel_playlist_loading()
         self.current_playlist = None
         self.current_playlist_path = None
+        self._playlist_order = []
+        self._row_by_filename = {}
         self.playlist_name.setText("Playlist")
         self.songs_list.clear()
         self._order_undo_stack.clear()
@@ -559,9 +568,17 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
             self.sync_requested.emit("pause", position)
             discord_rpc.update_paused()
         else:
-            if not self.player.source().isValid() and self.songs_list.count():
-                item = self.songs_list.currentItem() or self.songs_list.item(0)
-                self.play_song(item)
+            if not self.player.source().isValid() and self._playlist_order:
+                item = self.songs_list.currentItem()
+                if item is not None:
+                    self.play_song(item)
+                else:
+                    filename = self._playlist_order[0]
+                    self.play_file(
+                        self.current_playlist_path / filename,
+                        filename,
+                        0,
+                    )
                 return
             self.player.play()
             self.sync_requested.emit("play", self.player.position())
@@ -611,7 +628,7 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
         if self._room_connected():
             self._network_manager.skip(1)
             return
-        count = self.songs_list.count()
+        count = len(self._playlist_order)
         if not count:
             return
         row = (
@@ -619,18 +636,21 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
             if self.is_shuffled
             else (self.current_track_index + 1) % count
         )
-        self.play_song(self.songs_list.item(row))
+        filename = self._playlist_order[row]
+        self.play_file(
+            self.current_playlist_path / filename, filename, row
+        )
 
     def play_prev_track(self):
         if self._room_connected():
             self._network_manager.skip(-1)
             return
-        count = self.songs_list.count()
+        count = len(self._playlist_order)
         if count:
-            self.play_song(
-                self.songs_list.item(
-                    (self.current_track_index - 1) % count
-                )
+            row = (self.current_track_index - 1) % count
+            filename = self._playlist_order[row]
+            self.play_file(
+                self.current_playlist_path / filename, filename, row
             )
 
     play_next = play_next_track

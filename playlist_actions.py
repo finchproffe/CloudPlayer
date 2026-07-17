@@ -127,9 +127,12 @@ class PlaylistActionsMixin:
                 )
                 if self.current_track_filename == old_name:
                     self.current_track_filename = destination.name
-                self.refresh()
+                    self.current_track_path = destination.resolve()
+                self.songs_list.viewport().update()
+                self.playlist_updated.emit(self.current_playlist)
         elif chosen is duplicate:
             failures = []
+            inserted = []
             for source in paths:
                 destination = source.with_name(
                     source.stem + " copy" + source.suffix
@@ -143,10 +146,10 @@ class PlaylistActionsMixin:
                 try:
                     shutil.copy2(source, destination)
                     self._copy_sidecars(source, destination)
-                    self._insert_song_after(source.name, destination.name)
+                    inserted.append((source.name, destination.name))
                 except OSError as exc:
                     failures.append(f"{source.name}: {exc}")
-            self.refresh()
+            self._insert_songs_after(inserted)
             self.playlist_updated.emit(self.current_playlist)
             if failures:
                 QMessageBox.critical(
@@ -169,20 +172,21 @@ class PlaylistActionsMixin:
                 == QMessageBox.Yes
             ):
                 failures = []
+                deleted = []
                 for selected_path in paths:
                     deleted_name = selected_path.name
                     self.release_track(selected_path)
                     try:
                         self._unlink_track(selected_path)
                         self._delete_sidecars(selected_path)
-                        self._remove_song_from_order(deleted_name)
                     except OSError as exc:
                         failures.append(f"{deleted_name}: {exc}")
                         continue
+                    deleted.append(deleted_name)
                     if self.current_track_filename == deleted_name:
                         self.current_track_filename = None
                         self.current_track_index = -1
-                self.refresh()
+                self._remove_songs_from_order(deleted)
                 self.playlist_updated.emit(self.current_playlist)
                 if failures:
                     QMessageBox.critical(

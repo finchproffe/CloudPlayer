@@ -41,6 +41,7 @@ from group_sessions import GroupSessionWidget
 from hotkeys import GlobalHotkeyThread
 from network_sync_manager import NetworkSyncManager
 from player_widgets import PlaylistView
+from playlist_index import PlaylistSummaryLoader, flush_playlist_writes
 from recommendation_widgets import FlowLayout, RecommendationCard
 from smooth_scroll import SmoothScrollArea
 from threads import BackgroundDownloader, RecommendationFetcher, SearchWorker
@@ -121,6 +122,11 @@ class MusicPlayer(QMainWindow):
         self._cloud_load_index = 0
         self._cloud_load_failures = []
         self._cloud_load_cancelled = False
+        self._playlist_items = {}
+        self._known_playlist_names = set()
+        self._playlist_summaries = {}
+        self._playlist_summary_loaders = set()
+        self._playlist_list_generation = 0
         self._prepare_paths()
         self._build()
         self._restore_account()
@@ -500,10 +506,7 @@ class MusicPlayer(QMainWindow):
         self.account_panel.set_logged_out()
 
     def _playlist_names(self):
-        return [
-            str(self.playlist_list.item(index).data(Qt.UserRole))
-            for index in range(self.playlist_list.count())
-        ]
+        return sorted(self._known_playlist_names, key=str.casefold)
 
     def _choose_playlist(self, title, label, names):
         if not names:
@@ -1144,11 +1147,17 @@ class MusicPlayer(QMainWindow):
         (PLAYLISTS_PATH / name / "songs").mkdir(parents=True, exist_ok=True)
         metadata = PLAYLISTS_PATH / f"{name}.json"
         if not metadata.exists():
-            metadata.write_text(json.dumps({"name": name, "songs": []}), encoding="utf-8")
-        if not any(self.playlist_list.item(i).data(Qt.UserRole) == name for i in range(self.playlist_list.count())):
+            metadata.write_text(
+                json.dumps({"name": name, "song_count": 0}),
+                encoding="utf-8",
+            )
+        self._known_playlist_names.add(name)
+        if name not in self._playlist_items:
             item = QListWidgetItem()
             item.setData(Qt.UserRole, name)
             self.playlist_list.addItem(item)
+            self._playlist_items[name] = item
+            self._playlist_summaries.setdefault(name, (0, ""))
             self._refresh_playlist_item(item)
         return name
 
@@ -1158,11 +1167,83 @@ class MusicPlayer(QMainWindow):
             self._ensure_playlist(name.strip())
 
     def load_playlists(self):
+        self._playlist_list_generation += 1
+        generation = self._playlist_list_generation
+        for loader in tuple(self._playlist_summary_loaders):
+            loader.requestInterruption()
         self.playlist_list.clear()
-        for metadata in sorted(PLAYLISTS_PATH.glob("*.json")):
+        self._playlist_items.clear()
+        self._known_playlist_names.clear()
+        self._pending_playlist_names = []
+        self._pending_playlist_offset = 0
+        self._start_playlist_summary_load(None, generation)
+
+    def _playlist_names_ready(self, generation, names):
+        if generation != self._playlist_list_generation:
+            return
+        names = sorted(
+            set(str(name) for name in names) | self._known_playlist_names,
+            key=str.casefold,
+        )
+        self._known_playlist_names = set(names)
+        self._pending_playlist_names = names
+        self._pending_playlist_offset = 0
+        self._append_playlist_batch(generation)
+
+    def _append_playlist_batch(self, generation):
+        if generation != self._playlist_list_generation:
+            return
+        start = self._pending_playlist_offset
+        end = min(start + 24, len(self._pending_playlist_names))
+        self.playlist_list.setUpdatesEnabled(False)
+        for name in self._pending_playlist_names[start:end]:
+            if name in self._playlist_items:
+                continue
             item = QListWidgetItem()
-            item.setData(Qt.UserRole, metadata.stem)
+            item.setData(Qt.UserRole, name)
             self.playlist_list.addItem(item)
+            self._playlist_items[name] = item
+            self._refresh_playlist_item(item)
+        self.playlist_list.setUpdatesEnabled(True)
+        self._pending_playlist_offset = end
+        if end < len(self._pending_playlist_names):
+            QTimer.singleShot(
+                0, lambda token=generation: self._append_playlist_batch(token)
+            )
+
+    def _start_playlist_summary_load(self, names, discover_generation=None):
+        if names is not None:
+            names = [
+                str(name)
+                for name in names
+                if str(name) in self._known_playlist_names
+            ]
+        if names is not None and not names:
+            return
+        loader = PlaylistSummaryLoader(names, self)
+        self._playlist_summary_loaders.add(loader)
+        if discover_generation is not None:
+            loader.names_ready.connect(
+                lambda discovered, token=discover_generation: (
+                    self._playlist_names_ready(token, discovered)
+                )
+            )
+        loader.summary_ready.connect(self._playlist_summary_ready)
+        loader.finished.connect(
+            lambda current=loader: self._playlist_summary_finished(current)
+        )
+        loader.start()
+
+    def _playlist_summary_finished(self, loader):
+        self._playlist_summary_loaders.discard(loader)
+        loader.deleteLater()
+
+    def _playlist_summary_ready(self, name, count, first_track):
+        if name not in self._known_playlist_names:
+            return
+        self._playlist_summaries[name] = (int(count), str(first_track or ""))
+        item = self._playlist_items.get(name)
+        if item is not None:
             self._refresh_playlist_item(item)
 
     def open_playlist(self, item):
@@ -1171,21 +1252,30 @@ class MusicPlayer(QMainWindow):
 
     def _refresh_playlist_item(self, item):
         name = item.data(Qt.UserRole)
-        songs = [file for file in (PLAYLISTS_PATH / name / "songs").glob("*") if file.suffix.lower() in AUDIO_EXTENSIONS]
-        cover = self._playlist_cover(name, songs)
+        summary = self._playlist_summaries.get(name)
+        count, first_track = summary if summary is not None else (None, "")
+        cover = self._playlist_cover(name, first_track)
         rendered = rounded_cover_pixmap(cover, self.PLAYLIST_COVER, 9) if cover else self._placeholder(self.PLAYLIST_COVER)
         item.setIcon(QIcon(rendered))
-        item.setText(f"{name}\n{len(songs)} {'song' if len(songs) == 1 else 'songs'}")
+        if count is None:
+            item.setText(name)
+        else:
+            item.setText(
+                f"{name}\n{count} {'song' if count == 1 else 'songs'}"
+            )
 
     def refresh_playlist_item(self, name):
-        for index in range(self.playlist_list.count()):
-            item = self.playlist_list.item(index)
-            if item.data(Qt.UserRole) == name:
+        name = str(name)
+        if self.playlist_view.current_playlist == name:
+            self._playlist_summaries[name] = self.playlist_view.playlist_summary()
+            item = self._playlist_items.get(name)
+            if item is not None:
                 self._refresh_playlist_item(item)
-                break
+            return
+        self._start_playlist_summary_load([name])
 
     @staticmethod
-    def _playlist_cover(name, songs):
+    def _playlist_cover(name, first_track=""):
         folder = PLAYLISTS_PATH / name
         for extension in (".jpg", ".jpeg", ".png", ".webp"):
             path = folder / f"cover{extension}"
@@ -1193,9 +1283,10 @@ class MusicPlayer(QMainWindow):
                 pixmap = QPixmap(str(path))
                 if not pixmap.isNull():
                     return pixmap
-        if songs:
+        if first_track:
+            first_track = Path(first_track)
             for extension in (".jpg", ".jpeg", ".png", ".webp"):
-                path = sorted(songs)[0].with_suffix(extension)
+                path = first_track.with_suffix(extension)
                 if path.exists():
                     pixmap = QPixmap(str(path))
                     if not pixmap.isNull():
@@ -1281,6 +1372,9 @@ class MusicPlayer(QMainWindow):
                 failures.append(f"{name}: {exc}")
                 continue
             self.playlist_list.takeItem(self.playlist_list.row(item))
+            self._playlist_items.pop(name, None)
+            self._playlist_summaries.pop(name, None)
+            self._known_playlist_names.discard(name)
         if failures:
             QMessageBox.critical(
                 self,
@@ -1334,6 +1428,14 @@ class MusicPlayer(QMainWindow):
             event.ignore()
             return
         self.playlist_view.persist_volume()
+        self.playlist_view.cancel_playlist_loading()
+        for loader in tuple(self.playlist_view._playlist_loaders):
+            loader.requestInterruption()
+            loader.wait(1000)
+        for loader in tuple(self._playlist_summary_loaders):
+            loader.requestInterruption()
+            loader.wait(1000)
+        flush_playlist_writes()
         self.hotkeys.stop()
         self.hotkeys.wait(1000)
         if self.release_checker and self.release_checker.isRunning():

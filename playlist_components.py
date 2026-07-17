@@ -1,9 +1,10 @@
 
 
-from PySide6.QtCore import QEvent, QPoint, QRectF, QTimer, Qt, Signal
-from PySide6.QtGui import QColor, QDrag, QPainter, QPixmap
+from PySide6.QtCore import QEvent, QPoint, QRectF, QSize, QTimer, Qt, Signal
+from PySide6.QtGui import QColor, QDrag, QFont, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QListWidget, QSlider, QVBoxLayout, QWidget,
+    QDialog, QHBoxLayout, QLabel, QListWidget, QSlider, QStyle,
+    QStyledItemDelegate, QVBoxLayout, QWidget,
 )
 
 from config import ACCENT_COLOR, BG_COLOR, BUTTON_BORDER, PANEL_BG, TEXT_COLOR, TEXT_MUTED
@@ -117,7 +118,37 @@ class BoundedSongList(QListWidget):
         event.accept()
         self._finish_drag_preview()
         if before != after:
+            item = self.takeItem(source_row)
+            self.insertItem(target_row, item)
+            self.setCurrentItem(item)
             self.reorder_finished.emit(before, after)
+
+    def apply_order(self, target):
+        """Apply a single drag/undo without rebuilding every list row."""
+        current = self.order()
+        target = list(target)
+        if current == target:
+            return True
+        if len(current) != len(target) or set(current) != set(target):
+            return False
+
+        first = next(
+            index
+            for index, (old, new) in enumerate(zip(current, target))
+            if old != new
+        )
+        for filename in (current[first], target[first]):
+            source_row = current.index(filename)
+            target_row = target.index(filename)
+            without_current = current[:source_row] + current[source_row + 1 :]
+            without_target = target[:target_row] + target[target_row + 1 :]
+            if without_current != without_target:
+                continue
+            item = self.takeItem(source_row)
+            self.insertItem(target_row, item)
+            self.setCurrentItem(item)
+            return True
+        return False
 
     def _row_for_y(self, y):
         if not self.count():
@@ -254,6 +285,115 @@ class TrackListItemWidget(QWidget):
             "artist": self.artist,
             "cover": QPixmap(self.cover_pixmap),
         }
+
+
+class TrackItemDelegate(QStyledItemDelegate):
+    """Paint track rows on demand instead of creating a QWidget per track."""
+
+    ROW_HEIGHT = TrackListItemWidget.ROW_HEIGHT
+    COVER_SIZE = TrackListItemWidget.COVER_SIZE
+
+    def __init__(self, data_provider, parent=None):
+        super().__init__(parent)
+        self._data_provider = data_provider
+
+    def sizeHint(self, _option, _index):
+        return QSize(0, self.ROW_HEIGHT)
+
+    def paint(self, painter, option, index):
+        self.initStyleOption(option, index)
+        style = option.widget.style() if option.widget else None
+        if style is not None:
+            style.drawPrimitive(
+                QStyle.PE_PanelItemViewItem,
+                option,
+                painter,
+                option.widget,
+            )
+
+        filename = index.data(Qt.UserRole)
+        title, artist, cover = self._data_provider(filename)
+        rect = option.rect
+        cover_rect = QRectF(
+            rect.left() + 10,
+            rect.top() + (rect.height() - self.COVER_SIZE) / 2,
+            self.COVER_SIZE,
+            self.COVER_SIZE,
+        )
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        if cover is not None and not cover.isNull():
+            clip = QPainterPath()
+            clip.addRoundedRect(cover_rect, 6, 6)
+            painter.setClipPath(clip)
+            painter.drawPixmap(cover_rect.toRect(), cover)
+            painter.setClipping(False)
+        else:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(PANEL_BG))
+            painter.drawRoundedRect(cover_rect, 6, 6)
+            painter.setPen(QColor(TEXT_MUTED))
+            placeholder_font = QFont(option.font)
+            placeholder_font.setPointSize(18)
+            painter.setFont(placeholder_font)
+            painter.drawText(cover_rect, Qt.AlignCenter, "♫")
+
+        text_left = int(cover_rect.right()) + 10
+        text_width = max(0, rect.right() - text_left - 12)
+        title_font = QFont(option.font)
+        title_font.setBold(True)
+        title_font.setPointSize(10)
+        painter.setFont(title_font)
+        title_metrics = painter.fontMetrics()
+        title_height = title_metrics.height()
+
+        artist_font = QFont(option.font)
+        artist_font.setPointSize(8)
+        painter.setFont(artist_font)
+        artist_metrics = painter.fontMetrics()
+        artist_height = artist_metrics.height()
+
+        spacing = 4
+        block_height = title_height + spacing + artist_height
+        block_top = rect.top() + (rect.height() - block_height) // 2
+
+        painter.setFont(title_font)
+        painter.setPen(
+            option.palette.highlightedText().color()
+            if option.state & QStyle.State_Selected
+            else QColor(TEXT_COLOR)
+        )
+        title_text = title_metrics.elidedText(
+            f"{index.row() + 1}. {title}", Qt.ElideRight, text_width
+        )
+        painter.drawText(
+            text_left,
+            block_top,
+            text_width,
+            title_height,
+            Qt.AlignLeft | Qt.AlignVCenter,
+            title_text,
+        )
+
+        painter.setFont(artist_font)
+        painter.setPen(
+            option.palette.highlightedText().color()
+            if option.state & QStyle.State_Selected
+            else QColor(TEXT_COLOR)
+        )
+        artist_text = artist_metrics.elidedText(
+            str(artist), Qt.ElideRight, text_width
+        )
+        painter.drawText(
+            text_left,
+            block_top + title_height + spacing,
+            text_width,
+            artist_height,
+            Qt.AlignLeft | Qt.AlignVCenter,
+            artist_text,
+        )
+        painter.restore()
 
 
 class CoverPreviewDialog(QDialog):

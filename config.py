@@ -4,6 +4,30 @@ import re
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+KEYS_PATH = Path(
+    os.getenv("CLOUDPLAYER_KEYS_FILE", SCRIPT_DIR / "keys.json")
+)
+
+
+def _read_keys():
+    try:
+        payload = json.loads(KEYS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+_KEYS = _read_keys()
+
+
+def _secret(name, *environment_names, default=""):
+    for environment_name in environment_names:
+        value = os.getenv(environment_name)
+        if value is not None:
+            return value
+    return _KEYS.get(name, default)
+
+
 DOCS_PATH = Path.home() / "Documents" / "CloudPlayer"
 DOWNLOADS_PATH = DOCS_PATH / "downloads"
 PLAYLISTS_PATH = DOCS_PATH / "playlists"
@@ -109,66 +133,67 @@ ACCENT_COLOR = _UI_SETTINGS["accent_color"]
 SAVED_VOLUME = _UI_SETTINGS["volume"]
 
 
-GENIUS_CLIENT_ID = os.getenv(
-    "GENIUS_CLIENT_ID",
-    "",
+GENIUS_CLIENT_ID = str(
+    _secret("genius_client_id", "GENIUS_CLIENT_ID")
 ).strip()
-GENIUS_CLIENT_SECRET = os.getenv(
-    "GENIUS_CLIENT_SECRET",
-    "",
+GENIUS_CLIENT_SECRET = str(
+    _secret("genius_client_secret", "GENIUS_CLIENT_SECRET")
 ).strip()
-GENIUS_ACCESS_TOKEN = os.getenv(
-    "GENIUS_ACCESS_TOKEN",
-    "",
+GENIUS_ACCESS_TOKEN = str(
+    _secret("genius_access_token", "GENIUS_ACCESS_TOKEN")
 ).strip()
-
 
 GENIUS_TOKEN = GENIUS_ACCESS_TOKEN
 
-DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
+DISCORD_CLIENT_ID = str(
+    _secret("discord_client_id", "DISCORD_CLIENT_ID")
+).strip()
 
-SUPABASE_URL = os.getenv(
-    "CLOUDPLAYER_SUPABASE_URL",
-    "",
+SUPABASE_URL = str(
+    _secret("supabase_url", "CLOUDPLAYER_SUPABASE_URL")
 ).rstrip("/")
-SUPABASE_API_KEY = os.getenv(
-    "CLOUDPLAYER_SUPABASE_KEY",
-    os.getenv(
+SUPABASE_API_KEY = str(
+    _secret(
+        "supabase_api_key",
+        "CLOUDPLAYER_SUPABASE_KEY",
         "SUPABASE_ANON_KEY",
-        "",
-    ),
+    )
 ).strip()
-SUPABASE_ADMIN_API_KEY = os.getenv(
-    "CLOUDPLAYER_SUPABASE_ADMIN_KEY",
-    os.getenv(
+SUPABASE_ADMIN_API_KEY = str(
+    _secret(
+        "supabase_admin_api_key",
+        "CLOUDPLAYER_SUPABASE_ADMIN_KEY",
         "SUPABASE_SECRET_KEY",
-        "",
-    ),
+    )
 ).strip()
 
-TURNSTILE_SITE_KEY = os.getenv(
-    "CLOUDPLAYER_TURNSTILE_SITE_KEY",
-    "",
+TURNSTILE_SITE_KEY = str(
+    _secret("turnstile_site_key", "CLOUDPLAYER_TURNSTILE_SITE_KEY")
 ).strip()
-TURNSTILE_SECRET_KEY = os.getenv(
-    "CLOUDPLAYER_TURNSTILE_SECRET_KEY",
-    "",
+TURNSTILE_SECRET_KEY = str(
+    _secret("turnstile_secret_key", "CLOUDPLAYER_TURNSTILE_SECRET_KEY")
 ).strip()
-TURNSTILE_VERIFY_URL = (
-    ""
-)
+TURNSTILE_VERIFY_URL = str(
+    _secret("turnstile_verify_url", "CLOUDPLAYER_TURNSTILE_VERIFY_URL")
+).strip()
 CAPTCHA_HTML_PATH = SCRIPT_DIR / "captcha.html"
 
-TURN_URLS = [
-    value.strip()
-    for value in os.getenv(
-        "CLOUDPLAYER_TURN_URLS",
-        "turn:openrelay.metered.ca:80,turn:openrelay.metered.ca:443,turn:openrelay.metered.ca:443?transport=tcp",
-    ).split(",")
-    if value.strip()
-]
-TURN_USERNAME = os.getenv("CLOUDPLAYER_TURN_USERNAME", "openrelayproject")
-TURN_PASSWORD = os.getenv("CLOUDPLAYER_TURN_PASSWORD", "openrelayproject")
+_turn_urls = _secret("turn_urls", "CLOUDPLAYER_TURN_URLS", default=[])
+if isinstance(_turn_urls, str):
+    TURN_URLS = [
+        value.strip() for value in _turn_urls.split(",") if value.strip()
+    ]
+elif isinstance(_turn_urls, (list, tuple)):
+    TURN_URLS = [str(value).strip() for value in _turn_urls if str(value).strip()]
+else:
+    TURN_URLS = []
+
+TURN_USERNAME = str(
+    _secret("turn_username", "CLOUDPLAYER_TURN_USERNAME")
+).strip()
+TURN_PASSWORD = str(
+    _secret("turn_password", "CLOUDPLAYER_TURN_PASSWORD")
+).strip()
 
 
 def genius_credentials_ready():

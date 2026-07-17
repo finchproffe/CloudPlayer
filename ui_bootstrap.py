@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from config import PLAYLISTS_PATH
+from playlist_index import flush_playlist_writes
 
 _INSTALLED = False
 _ORIGINAL_APP_INIT = None
@@ -134,7 +135,10 @@ def _rename_playlist(window, item):
     if new_folder.exists() or new_metadata.exists():
         QMessageBox.warning(window, "Rename Playlist", "That playlist already exists.")
         return
+    view = window.playlist_view
     try:
+        flush_playlist_writes()
+        view.forget_playlist(old_name)
         if old_folder.exists():
             old_folder.rename(new_folder)
         if old_metadata.exists():
@@ -146,16 +150,29 @@ def _rename_playlist(window, item):
             except Exception:
                 data = {}
         data["name"] = new_name
-        data.setdefault("songs", [])
+        if "songs" not in data:
+            data.setdefault("song_count", 0)
         new_metadata.write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         item.setData(Qt.UserRole, new_name)
+        window._playlist_items.pop(old_name, None)
+        window._playlist_items[new_name] = item
+        window._known_playlist_names.discard(old_name)
+        window._known_playlist_names.add(new_name)
+        if old_name in window._playlist_summaries:
+            count, first_track = window._playlist_summaries.pop(old_name)
+            if first_track:
+                first_track = str(
+                    new_folder / "songs" / Path(first_track).name
+                )
+            window._playlist_summaries[new_name] = (count, first_track)
         window._refresh_playlist_item(item)
-        view = window.playlist_view
         if view.current_playlist == old_name:
             view.current_playlist = new_name
             view.current_playlist_path = new_folder / "songs"
+            view._playlist_metadata["name"] = new_name
+            view._write_song_order(list(view._playlist_order))
             view.playlist_name.setText(new_name)
     except Exception as exc:
         if new_folder.exists() and not old_folder.exists():
@@ -163,6 +180,8 @@ def _rename_playlist(window, item):
                 new_folder.rename(old_folder)
             except Exception:
                 pass
+        if view.current_playlist == old_name:
+            view._write_song_order(list(view._playlist_order))
         QMessageBox.critical(window, "Rename Playlist", str(exc))
 
 
