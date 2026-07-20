@@ -50,7 +50,7 @@ CloudPlayer is a desktop music player built with Python, PySide6 and Qt Multimed
 - Перемотка нажатием или перетаскиванием по timeline.
 - Отображение текущего времени, длительности и прогресса сетевого буфера.
 - Регулировка громкости ползунком или точным числом.
-- Быстрое включение и выключение звука.
+- Быстрое включение и выключение звука с плавным затуханием, восстановлением громкости и анимацией черты.
 - Сохранение выбранной громкости между запусками.
 - Repeat с плавной анимацией черты состояния.
 - Shuffle с устойчивой очередью случайных треков.
@@ -101,6 +101,8 @@ CloudPlayer is a desktop music player built with Python, PySide6 and Qt Multimed
 - Discord Rich Presence с текущим треком, исполнителем, обложкой и состоянием паузы.
 - Проверка обновлений через GitHub Releases.
 - Проверка размера и SHA-256 перед сохранением обновления.
+- Установка через отдельный updater после полного завершения CloudPlayer.
+- Автоматический перезапуск, подтверждение успешного запуска и откат при раннем падении новой версии.
 
 Thumbnail Toolbar доступен только в Windows. Глобальные media keys в Windows сначала используют нативный Win32 backend, затем библиотеку `keyboard` как резервный вариант.
 
@@ -113,6 +115,7 @@ Thumbnail Toolbar доступен только в Windows. Глобальные
 - Одинаковый плавный инерционный скролл во всех списках, текстовых областях и файловых диалогах.
 - Стилизованные вертикальные и горизонтальные scrollbar без стандартных стрелок.
 - Настраиваемый основной accent-цвет.
+- Галочка `check.svg` в настройках плавно прорисовывается слева направо и исчезает в обратном направлении.
 - Опциональная Debug Console с stdout, stderr, предупреждениями, Python/Qt-логами и необработанными исключениями.
 - Ссылки GitHub и Telegram показываются во внутреннем меню и могут быть скопированы.
 - Кнопка поддержки показывает адрес пожертвования и позволяет скопировать его.
@@ -139,6 +142,24 @@ python main.py
 - `requests`.
 
 Файл `ffmpeg.exe` уже находится в корне проекта. Другой путь можно указать через переменную окружения `CLOUDPLAYER_FFMPEG`.
+
+### Сборка автообновления
+
+Автоматическая установка работает в собранной Windows-версии. `CloudPlayer.exe` должен быть самодостаточной one-file сборкой, поскольку updater заменяет именно этот файл. Соберите отдельный updater:
+
+```powershell
+python -m pip install -r requirements-build.txt
+python -m PyInstaller --clean --noconfirm CloudPlayerUpdater.spec
+```
+
+В каждый GitHub Release необходимо загрузить два asset-файла с точными именами:
+
+- `CloudPlayer.exe`;
+- `CloudPlayerUpdater.exe`.
+
+Переход с версии, в которой ещё нет этого механизма, на `1.2.0` выполняется один раз вручную. После установки `1.2.0` последующие обновления поддерживают автоматическую замену и перезапуск.
+
+GitHub должен предоставить SHA-256 digest для обоих файлов. После загрузки пользователь получает диалог `Update and Restart`. Updater ждёт закрытия процесса, сохраняет текущий файл как `CloudPlayer.exe.old`, устанавливает новую сборку и запускает её с одноразовым token. После появления главного окна новая версия подтверждает запуск. Если процесс завершится до подтверждения, updater восстановит старый `.exe`. Журнал находится в `Documents/CloudPlayer/update.log`.
 
 ### Настройка интеграций
 
@@ -177,7 +198,10 @@ Documents/CloudPlayer/
 ├── account.json
 ├── settings.json
 ├── update_state.json
+├── update.log
 ├── downloads/
+│   ├── CloudPlayer.exe
+│   └── CloudPlayerUpdater.exe
 ├── playlists/
 │   ├── Playlist Name.json
 │   └── Playlist Name/
@@ -189,7 +213,8 @@ Documents/CloudPlayer/
 - `settings.json` хранит accent-цвет, громкость и состояние Debug Console.
 - `account.json` хранит локальную сессию аккаунта.
 - `playlists` содержит аудиофайлы, обложки, sidecar-метаданные и порядок треков.
-- `downloads` содержит загруженное обновление `CloudPlayer.exe`.
+- `downloads` содержит проверенные файлы `CloudPlayer.exe` и `CloudPlayerUpdater.exe`.
+- `update.log` содержит журнал установки и отката обновлений.
 - `temp/lyrics` содержит кеш текстов песен и временные файлы.
 
 Удаление плейлиста или трека из интерфейса удаляет соответствующие локальные файлы.
@@ -266,7 +291,7 @@ The cover context menu can open the image at full size, save it to a file or cop
 - Click or drag on the timeline to seek.
 - Current time, duration and network-buffer progress.
 - Slider-based or exact numeric volume control.
-- Quick mute and unmute.
+- Quick mute and unmute with smooth audio fading, volume restoration and an animated slash.
 - Persisted volume between launches.
 - Repeat with a smooth animated state slash.
 - Shuffle with a stable randomized queue.
@@ -317,6 +342,8 @@ Local files without an original downloadable URL are skipped during synchronizat
 - Discord Rich Presence with track, artist, cover and paused state.
 - GitHub Releases update checks.
 - Size and SHA-256 verification before an update is saved.
+- Installation through a separate updater after CloudPlayer has fully exited.
+- Automatic restart, startup confirmation and rollback when the new version exits early.
 
 Thumbnail Toolbar is available only on Windows. Global media keys use the native Win32 backend first and the `keyboard` package as a fallback.
 
@@ -329,6 +356,7 @@ Thumbnail Toolbar is available only on Windows. Global media keys use the native
 - The same inertial scrolling behavior in lists, text areas and file dialogs.
 - Styled vertical and horizontal scrollbars without native arrow buttons.
 - Configurable primary accent color.
+- The settings `check.svg` mark draws smoothly from left to right and disappears in reverse.
 - Optional Debug Console with stdout, stderr, warnings, Python/Qt logs and uncaught exceptions.
 - GitHub and Telegram links are displayed in an internal menu and can be copied.
 - The support button displays the donation address and lets you copy it.
@@ -355,6 +383,24 @@ Main dependencies:
 - `requests`.
 
 `ffmpeg.exe` is included in the project root. Set `CLOUDPLAYER_FFMPEG` to use a different executable.
+
+### Building automatic updates
+
+Automatic installation is enabled in the packaged Windows application. `CloudPlayer.exe` must be a self-contained one-file build because the updater replaces that exact file. Build the separate updater with:
+
+```powershell
+python -m pip install -r requirements-build.txt
+python -m PyInstaller --clean --noconfirm CloudPlayerUpdater.spec
+```
+
+Upload two assets with these exact names to every GitHub Release:
+
+- `CloudPlayer.exe`;
+- `CloudPlayerUpdater.exe`.
+
+Moving from a version that does not include this mechanism to `1.2.0` is a one-time manual update. After `1.2.0` is installed, later releases support automatic replacement and restart.
+
+GitHub must provide a SHA-256 digest for both files. After downloading, the user receives an `Update and Restart` dialog. The updater waits for the running process to exit, saves it as `CloudPlayer.exe.old`, installs the new build and starts it with a one-time token. The new version confirms startup after its main window appears. If it exits before confirmation, the updater restores the previous executable. Logs are written to `Documents/CloudPlayer/update.log`.
 
 ### Integration configuration
 
@@ -393,7 +439,10 @@ Documents/CloudPlayer/
 ├── account.json
 ├── settings.json
 ├── update_state.json
+├── update.log
 ├── downloads/
+│   ├── CloudPlayer.exe
+│   └── CloudPlayerUpdater.exe
 ├── playlists/
 │   ├── Playlist Name.json
 │   └── Playlist Name/
@@ -405,7 +454,8 @@ Documents/CloudPlayer/
 - `settings.json` stores the accent color, volume and Debug Console state.
 - `account.json` stores the local account session.
 - `playlists` contains audio files, covers, sidecar metadata and track order.
-- `downloads` contains the downloaded `CloudPlayer.exe` update.
+- `downloads` contains the verified `CloudPlayer.exe` and `CloudPlayerUpdater.exe` files.
+- `update.log` contains update installation and rollback events.
 - `temp/lyrics` contains cached lyrics and temporary files.
 
 Removing a playlist or track through the interface deletes its corresponding local files.

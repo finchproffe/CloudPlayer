@@ -79,6 +79,27 @@ def svg_icon(svg_text, color=ICON_COLOR, size=24):
     return QIcon(pixmap)
 
 
+def colored_svg_renderer(filename, color=ICON_COLOR):
+    path = _asset_path(filename)
+    if path is None:
+        print(f"[Icon] Missing: {filename} (searched project root and icons folder)")
+        return QSvgRenderer()
+    try:
+        source = path.read_text(encoding="utf-8").replace(
+            "currentColor",
+            color,
+        )
+        source = re.sub(
+            r'(?i)(stroke|fill)="(?:#000000|#000|black|#ffffff|#fff|white)"',
+            lambda match: f'{match.group(1)}="{color}"',
+            source,
+        )
+        return QSvgRenderer(QByteArray(source.encode("utf-8")))
+    except Exception as exc:
+        print(f"[Icon] Failed to load {path}: {exc}")
+        return QSvgRenderer()
+
+
 def colored_icon(filename, color=ICON_COLOR, size=24):
     path = _asset_path(filename)
     if path is None:

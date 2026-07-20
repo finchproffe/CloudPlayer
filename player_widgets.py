@@ -1,7 +1,7 @@
 import random
 from pathlib import Path
 
-from PySide6.QtCore import QEasingCurve, Property, QPropertyAnimation, QSize, QTimer, Qt, QUrl, Signal, Slot
+from PySide6.QtCore import QEasingCurve, Property, QPropertyAnimation, QSize, QTimer, Qt, QUrl, QVariantAnimation, Signal, Slot
 from PySide6.QtGui import (
     QColor, QKeySequence, QPainter, QPen, QPixmap, QShortcut,
 )
@@ -181,6 +181,60 @@ class AnimatedRepeatButton(QPushButton):
         painter.end()
 
 
+class AnimatedVolumeButton(QPushButton):
+    def __init__(self, muted=False, parent=None):
+        super().__init__(parent)
+        self._muted = bool(muted)
+        self._slash_progress = 1.0 if self._muted else 0.0
+        self.setIcon(colored_icon("volume-on.svg"))
+        self.animation = QPropertyAnimation(self, b"slashProgress", self)
+        self.animation.setDuration(380)
+        self.animation.setEasingCurve(QEasingCurve.InOutCubic)
+
+    def _get_slash_progress(self):
+        return self._slash_progress
+
+    def _set_slash_progress(self, value):
+        self._slash_progress = max(0.0, min(1.0, float(value)))
+        self.update()
+
+    slashProgress = Property(
+        float,
+        _get_slash_progress,
+        _set_slash_progress,
+    )
+
+    def set_muted(self, muted):
+        muted = bool(muted)
+        if muted == self._muted:
+            return
+        self._muted = muted
+        self.animation.stop()
+        self.animation.setStartValue(self._slash_progress)
+        self.animation.setEndValue(1.0 if muted else 0.0)
+        self.animation.start()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._slash_progress <= 0.001:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setOpacity(min(1.0, self._slash_progress * 1.35))
+        pen = QPen(QColor(TEXT_COLOR), 2.25)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        center = self.rect().center()
+        span = 10.0 * self._slash_progress
+        painter.drawLine(
+            round(center.x() - span),
+            round(center.y() - span),
+            round(center.x() + span),
+            round(center.y() + span),
+        )
+        painter.end()
+
+
 class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
     back_requested = Signal()
     sync_requested = Signal(str, int)
@@ -251,13 +305,9 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
         self.now_playing.setStyleSheet(
             f"color:{TEXT_MUTED};font-size:15px"
         )
-        self.volume_btn = QPushButton()
-        self.volume_btn.setIcon(
-            colored_icon(
-                "volume-on.svg" if SAVED_VOLUME > 0 else "volume-off.svg"
-            )
-        )
+        self.volume_btn = AnimatedVolumeButton(SAVED_VOLUME <= 0)
         self.volume_btn.setFixedSize(34, 34)
+        self.volume_btn.setIconSize(QSize(22, 22))
         self.volume_btn.setFlat(True)
         self.volume_slider = DirectJumpSlider(Qt.Horizontal)
         self.volume_slider.setFixedWidth(120)
@@ -388,6 +438,14 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
         self.audio_output = QAudioOutput(self)
         self.player.setAudioOutput(self.audio_output)
         self.audio_output.setVolume(SAVED_VOLUME / 100)
+        self._last_nonzero_volume = SAVED_VOLUME if SAVED_VOLUME > 0 else 70
+        self._mute_requested = SAVED_VOLUME <= 0
+        self._volume_fade_target_muted = self._mute_requested
+        self._volume_fade = QVariantAnimation(self)
+        self._volume_fade.setDuration(480)
+        self._volume_fade.setEasingCurve(QEasingCurve.InOutCubic)
+        self._volume_fade.valueChanged.connect(self._apply_faded_volume)
+        self._volume_fade.finished.connect(self._volume_fade_finished)
         self._volume_save_timer = QTimer(self)
         self._volume_save_timer.setSingleShot(True)
         self._volume_save_timer.setInterval(300)
@@ -420,12 +478,52 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
         self.undo_shortcut.activated.connect(self.undo_song_reorder)
 
     def _set_volume(self, value):
+        self._volume_fade.stop()
+        self._mute_requested = value <= 0
         self.audio_output.setVolume(value / 100)
         self.volume_percent.setText(f"{value}%")
         self._volume_save_timer.start()
         if self.audio_output.isMuted() and value > 0:
             self.audio_output.setMuted(False)
-            self.volume_btn.setIcon(colored_icon("volume-on.svg"))
+        if value > 0:
+            self._last_nonzero_volume = value
+        self.volume_btn.set_muted(
+            self.audio_output.isMuted() or value <= 0
+        )
+
+    def _apply_faded_volume(self, value):
+        self.audio_output.setVolume(
+            max(0.0, min(1.0, float(value)))
+        )
+
+    def _volume_fade_finished(self):
+        if self._volume_fade_target_muted:
+            if not self._mute_requested:
+                return
+            self.audio_output.setMuted(True)
+            self.audio_output.setVolume(self.volume_slider.value() / 100)
+            return
+        if self._mute_requested:
+            return
+        self.audio_output.setMuted(False)
+        self.audio_output.setVolume(self.volume_slider.value() / 100)
+
+    def _start_volume_fade(self, muted):
+        muted = bool(muted)
+        self._volume_fade.stop()
+        was_muted = self.audio_output.isMuted()
+        current = 0.0 if was_muted else self.audio_output.volume()
+        if not muted and self.volume_slider.value() <= 0:
+            self.volume_slider.setValue(self._last_nonzero_volume)
+        target = 0.0 if muted else self.volume_slider.value() / 100
+        self._mute_requested = muted
+        self._volume_fade_target_muted = muted
+        self.volume_btn.set_muted(muted)
+        self.audio_output.setMuted(False)
+        self.audio_output.setVolume(current)
+        self._volume_fade.setStartValue(current)
+        self._volume_fade.setEndValue(target)
+        self._volume_fade.start()
 
     def persist_volume(self):
         if hasattr(self, "_volume_save_timer"):
@@ -1035,11 +1133,4 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
             self.play_next_track()
 
     def toggle_mute(self):
-        self.audio_output.setMuted(not self.audio_output.isMuted())
-        self.volume_btn.setIcon(
-            colored_icon(
-                "volume-off.svg"
-                if self.audio_output.isMuted()
-                else "volume-on.svg"
-            )
-        )
+        self._start_volume_fade(not self._mute_requested)

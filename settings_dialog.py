@@ -1,13 +1,15 @@
 import re
 
-from PySide6.QtCore import Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QEasingCurve, Property, QPropertyAnimation, QRectF, Signal
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QStyle,
+    QStyleOptionButton,
     QVBoxLayout,
 )
 
@@ -25,6 +27,66 @@ from config import (
     normalize_accent_color,
 )
 from dropdown_ui import QColorDialog, QDialog
+from utils import colored_svg_renderer
+
+
+class AnimatedCheckBox(QCheckBox):
+    def __init__(self, text="", checked=False, parent=None):
+        super().__init__(text, parent)
+        super().setChecked(bool(checked))
+        self._check_progress = 1.0 if checked else 0.0
+        self._check_renderer = colored_svg_renderer("check.svg", "#FFFFFF")
+        self.animation = QPropertyAnimation(self, b"checkProgress", self)
+        self.animation.setDuration(380)
+        self.animation.setEasingCurve(QEasingCurve.InOutCubic)
+        self.toggled.connect(self._animate_check)
+
+    def _get_check_progress(self):
+        return self._check_progress
+
+    def _set_check_progress(self, value):
+        self._check_progress = max(0.0, min(1.0, float(value)))
+        self.update()
+
+    checkProgress = Property(
+        float,
+        _get_check_progress,
+        _set_check_progress,
+    )
+
+    def _animate_check(self, checked):
+        self.animation.stop()
+        self.animation.setStartValue(self._check_progress)
+        self.animation.setEndValue(1.0 if checked else 0.0)
+        self.animation.start()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._check_progress <= 0.001:
+            return
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        indicator = self.style().subElementRect(
+            QStyle.SubElement.SE_CheckBoxIndicator,
+            option,
+            self,
+        )
+        target = QRectF(indicator).adjusted(0.5, 0.5, -0.5, -0.5)
+        visible_width = target.width() * self._check_progress
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter.setOpacity(min(1.0, self._check_progress * 1.4))
+        painter.setClipRect(
+            QRectF(
+                target.left(),
+                target.top(),
+                visible_width,
+                target.height(),
+            )
+        )
+        self._check_renderer.render(painter, target)
+        painter.end()
 
 
 class SettingsDialog(QDialog):
@@ -93,8 +155,10 @@ class SettingsDialog(QDialog):
         developer_description.setStyleSheet(
             f"color:{TEXT_MUTED};font-size:12px;background:transparent"
         )
-        self.debug_checkbox = QCheckBox("Enable Debug Console")
-        self.debug_checkbox.setChecked(self.debug_enabled)
+        self.debug_checkbox = AnimatedCheckBox(
+            "Enable Debug Console",
+            self.debug_enabled,
+        )
         self.debug_checkbox.toggled.connect(self._set_debug_enabled)
 
         account_title = QLabel("Account")
@@ -151,7 +215,12 @@ class SettingsDialog(QDialog):
             f"QDialog{{background:{BG_COLOR};color:{TEXT_COLOR}}}"
             f"QLabel{{color:{TEXT_COLOR}}}"
             f"QCheckBox{{color:{TEXT_COLOR};spacing:10px;padding:6px 0}}"
-            f"QCheckBox::indicator{{width:18px;height:18px}}"
+            f"QCheckBox::indicator{{width:20px;height:20px;image:none;"
+            f"background:{PANEL_BG};"
+            f"border:1px solid {BUTTON_BORDER};border-radius:5px}}"
+            f"QCheckBox::indicator:hover{{border-color:{self.selected_color}}}"
+            f"QCheckBox::indicator:checked{{background:{self.selected_color};"
+            f"border-color:{self.selected_color}}}"
             f"QLineEdit{{background:{PANEL_BG};color:{TEXT_COLOR};border:1px "
             f"solid {BUTTON_BORDER};border-radius:5px;padding:11px}}"
             f"QPushButton{{background:{BUTTON_BG};color:{TEXT_COLOR};border:1px "

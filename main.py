@@ -42,8 +42,10 @@ from account_sync import (
 )
 from app_updater import (
     APP_VERSION, UPDATE_DOWNLOAD_PATH, ReleaseChecker, UpdateDialog,
-    UpdateDownloader, file_sha256, read_update_state, version_parts,
-    write_update_state,
+    UpdateDownloader, UpdateReadyDialog, acknowledge_update_startup,
+    automatic_update_supported, consume_update_token,
+    downloaded_update_is_valid, launch_update_installer,
+    read_update_state, version_parts, write_update_state,
 )
 from ui_polish import polish_tree
 from font_config import setup_application_fonts
@@ -880,10 +882,13 @@ class MusicPlayer(QMainWindow):
             )
 
     def _release_is_downloaded(self, release):
-        return self.update_state.get("downloaded_version") == release["version"] and UPDATE_DOWNLOAD_PATH.is_file() and UPDATE_DOWNLOAD_PATH.stat().st_size == release["size"] and file_sha256(UPDATE_DOWNLOAD_PATH) == release["sha256"]
+        return (
+            self.update_state.get("downloaded_version") == release["version"]
+            and downloaded_update_is_valid(release)
+        )
 
     def _release_is_acknowledged(self, release):
-        known = max(version_parts(APP_VERSION), version_parts(self.update_state.get("acknowledged_version") or "0"), version_parts(self.update_state.get("downloaded_version") or "0"))
+        known = max(version_parts(APP_VERSION), version_parts(self.update_state.get("acknowledged_version") or "0"))
         return version_parts(release["version"]) <= known
 
     def _manual_check_for_updates(self):
@@ -900,14 +905,19 @@ class MusicPlayer(QMainWindow):
 
     def _update_check_finished(self, release):
         self.latest_release = release
+        self.update_state = read_update_state()
         self.update_state.update({"installed_version": APP_VERSION, "last_check_date": datetime.now(timezone.utc).isoformat(), "latest_version": release["version"], "latest_release_date": release.get("published_at")})
         write_update_state(self.update_state)
-        if self._release_is_acknowledged(release):
+        if version_parts(release["version"]) <= version_parts(APP_VERSION):
             if self._manual_update_check:
                 QMessageBox.information(self, "CloudPlayer Update", "You have the latest version installed.")
         elif self._release_is_downloaded(release):
+            deferred = self.update_state.get("deferred_version")
+            if self._manual_update_check or deferred != release["version"]:
+                self._show_ready_update(release)
+        elif self._release_is_acknowledged(release):
             if self._manual_update_check:
-                self._open_download_folder(UPDATE_DOWNLOAD_PATH)
+                self._show_update_dialog(release)
         else:
             self._show_update_dialog(release)
         self._manual_update_check = False
@@ -940,13 +950,58 @@ class MusicPlayer(QMainWindow):
         self.update_progress.show()
         self.update_downloader.start()
 
-    def _update_downloaded(self, filename):
+    def _update_downloaded(self, filename, helper_filename):
         if self.update_progress:
             self.update_progress.close()
         version = self.latest_release["version"] if self.latest_release else APP_VERSION
-        self.update_state.update({"downloaded_version": version, "acknowledged_version": version, "downloaded_path": filename, "downloaded_date": datetime.now(timezone.utc).isoformat()})
+        self.update_state.update({"downloaded_version": version, "downloaded_path": filename, "downloaded_helper_path": helper_filename or None, "downloaded_date": datetime.now(timezone.utc).isoformat(), "deferred_version": None})
         write_update_state(self.update_state)
-        self._open_download_folder(filename)
+        if self.latest_release:
+            self._show_ready_update(self.latest_release)
+
+    def _show_ready_update(self, release):
+        automatic = automatic_update_supported(release)
+        dialog = UpdateReadyDialog(release, automatic, self)
+        polish_tree(dialog)
+        if dialog.exec() == QDialog.Accepted:
+            if automatic:
+                self._install_downloaded_update(release)
+            else:
+                self.update_state = read_update_state()
+                self.update_state["deferred_version"] = release["version"]
+                write_update_state(self.update_state)
+                self._open_download_folder(UPDATE_DOWNLOAD_PATH)
+            return
+        self.update_state = read_update_state()
+        self.update_state["deferred_version"] = release["version"]
+        write_update_state(self.update_state)
+
+    def _install_downloaded_update(self, release):
+        busy = any(
+            worker is not None and worker.isRunning()
+            for worker in (
+                self._cloud_worker,
+                self._cloud_download_worker,
+                self._account_stats_worker,
+            )
+        )
+        if busy:
+            QMessageBox.information(
+                self,
+                "CloudPlayer Update",
+                "Finish the current cloud operation before restarting.",
+            )
+            return
+        started, message = launch_update_installer(release)
+        if not started:
+            QMessageBox.warning(
+                self,
+                "CloudPlayer Update",
+                message,
+            )
+            self._open_download_folder(UPDATE_DOWNLOAD_PATH)
+            return
+        QTimer.singleShot(0, self.close)
 
     def _update_download_failed(self, message):
         if self.update_progress:
@@ -1509,7 +1564,9 @@ class MusicPlayer(QMainWindow):
 
 
 def run():
-    app = QApplication(sys.argv)
+    arguments, update_token = consume_update_token(sys.argv)
+    sys.argv = arguments
+    app = QApplication(arguments)
     app.setStyle("Fusion")
     setup_application_fonts(app)
     loop = QEventLoop(app)
@@ -1517,6 +1574,11 @@ def run():
     window = MusicPlayer()
     polish_tree(window)
     window.show()
+    if update_token:
+        QTimer.singleShot(
+            750,
+            lambda token=update_token: acknowledge_update_startup(token),
+        )
     app.aboutToQuit.connect(loop.stop)
     with loop:
         loop.run_forever()
