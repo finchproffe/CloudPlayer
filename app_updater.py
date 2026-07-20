@@ -10,10 +10,11 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
+    QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
 )
 
 from config import DOCS_PATH, DOWNLOADS_PATH, TEXT_MUTED
+from dropdown_ui import QDialog
 
 APP_VERSION = "1.1.0"
 RELEASE_API_URL = "https://api.github.com/repos/finchproffe/CloudPlayer/releases/latest"

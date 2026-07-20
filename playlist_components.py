@@ -1,13 +1,23 @@
 
 
-from PySide6.QtCore import QEvent, QPoint, QRectF, QSize, QTimer, Qt, Signal
+from PySide6.QtCore import (
+    QElapsedTimer,
+    QEvent,
+    QPoint,
+    QRectF,
+    QSize,
+    QTimer,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import QColor, QDrag, QFont, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QListWidget, QSlider, QStyle,
+    QHBoxLayout, QLabel, QListWidget, QSlider, QStyle,
     QStyledItemDelegate, QVBoxLayout, QWidget,
 )
 
 from config import ACCENT_COLOR, BG_COLOR, BUTTON_BORDER, PANEL_BG, TEXT_COLOR, TEXT_MUTED
+from dropdown_ui import QDialog
 from smooth_scroll import SmoothScrollArea
 from utils import rounded_cover_pixmap
 
@@ -27,12 +37,15 @@ class BoundedSongList(QListWidget):
         self._last_cursor_y = 0
         self._scroll_speed = 0.0
         self._target_scroll_speed = 0.0
+        self._scroll_remainder = 0.0
+        self._scroll_clock = QElapsedTimer()
         self._drag_preview = QLabel(self.viewport())
         self._drag_preview.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self._drag_preview.setStyleSheet("background:transparent;border:none")
         self._drag_preview.hide()
         self._auto_scroll_timer = QTimer(self)
-        self._auto_scroll_timer.setInterval(16)
+        self._auto_scroll_timer.setTimerType(Qt.PreciseTimer)
+        self._auto_scroll_timer.setInterval(0)
         self._auto_scroll_timer.timeout.connect(self._auto_scroll_tick)
 
     def order(self):
@@ -63,6 +76,7 @@ class BoundedSongList(QListWidget):
         self._move_preview(cursor.y())
         self._drag_preview.show()
         self._drag_preview.raise_()
+        self._scroll_clock.start()
         self._auto_scroll_timer.start()
 
         drag = QDrag(self)
@@ -124,7 +138,6 @@ class BoundedSongList(QListWidget):
             self.reorder_finished.emit(before, after)
 
     def apply_order(self, target):
-        """Apply a single drag/undo without rebuilding every list row."""
         current = self.order()
         target = list(target)
         if current == target:
@@ -177,15 +190,24 @@ class BoundedSongList(QListWidget):
         if self._drag_item is None:
             self._auto_scroll_timer.stop()
             return
+        elapsed = self._scroll_clock.nsecsElapsed() / 1_000_000.0
+        self._scroll_clock.restart()
+        frame_scale = max(0.0, min(3.0, elapsed / 16.0))
+        blend = 1.0 - (1.0 - 0.22) ** frame_scale
         self._scroll_speed += (
             self._target_scroll_speed - self._scroll_speed
-        ) * 0.22
+        ) * blend
         if abs(self._scroll_speed) < 0.15 and self._target_scroll_speed == 0:
             self._scroll_speed = 0.0
+            self._scroll_remainder = 0.0
             return
         bar = self.verticalScrollBar()
         old_value = bar.value()
-        bar.setValue(round(old_value + self._scroll_speed))
+        self._scroll_remainder += self._scroll_speed * frame_scale
+        step = int(self._scroll_remainder)
+        if step:
+            self._scroll_remainder -= step
+            bar.setValue(old_value + step)
         if bar.value() != old_value:
             self._move_preview(self._last_cursor_y)
 
@@ -201,6 +223,7 @@ class BoundedSongList(QListWidget):
         self._auto_scroll_timer.stop()
         self._scroll_speed = 0.0
         self._target_scroll_speed = 0.0
+        self._scroll_remainder = 0.0
         self._drag_preview.hide()
         self._drag_preview.clear()
         self._drag_item = None
@@ -288,8 +311,6 @@ class TrackListItemWidget(QWidget):
 
 
 class TrackItemDelegate(QStyledItemDelegate):
-    """Paint track rows on demand instead of creating a QWidget per track."""
-
     ROW_HEIGHT = TrackListItemWidget.ROW_HEIGHT
     COVER_SIZE = TrackListItemWidget.COVER_SIZE
 

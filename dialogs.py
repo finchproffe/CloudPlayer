@@ -5,15 +5,11 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QApplication,
-    QDialog,
-    QFileDialog,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QProgressBar,
     QPushButton,
     QVBoxLayout,
@@ -32,6 +28,7 @@ from config import (
     TEXT_COLOR,
     TEXT_MUTED,
 )
+from dropdown_ui import QDialog, QFileDialog, QInputDialog, QMessageBox
 from room_tcp_patch import install as install_room_tcp_patch
 from threads import BackgroundDownloader, SearchWorker
 from utils import colored_icon

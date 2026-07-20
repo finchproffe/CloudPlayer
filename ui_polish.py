@@ -4,15 +4,93 @@ import re
 
 from PySide6.QtCore import QCoreApplication, QEvent, QObject, QTimer, Qt
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QMenu, QWidget
+from PySide6.QtWidgets import QAbstractScrollArea, QMenu, QWidget
+
+from config import ACCENT_COLOR, BUTTON_BORDER, PANEL_BG, TEXT_MUTED
+from smooth_scroll import enable_smooth_scrolling
 
 FONT_WEIGHT = QFont.Weight.Bold
+SCROLLBAR_STYLE = f"""
+QScrollBar:vertical {{
+    background:{PANEL_BG};
+    width:12px;
+    margin:3px 2px;
+    border:none;
+    border-radius:5px;
+}}
+QScrollBar::handle:vertical {{
+    background:{BUTTON_BORDER};
+    min-height:34px;
+    border:none;
+    border-radius:4px;
+}}
+QScrollBar::handle:vertical:hover {{
+    background:{TEXT_MUTED};
+    border:1px solid {TEXT_MUTED};
+}}
+QScrollBar::handle:vertical:pressed {{
+    background:{ACCENT_COLOR};
+    border:1px solid {ACCENT_COLOR};
+}}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {{
+    height:0;
+    background:transparent;
+    border:none;
+}}
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {{
+    background:transparent;
+}}
+QScrollBar:horizontal {{
+    background:{PANEL_BG};
+    height:12px;
+    margin:2px 3px;
+    border:none;
+    border-radius:5px;
+}}
+QScrollBar::handle:horizontal {{
+    background:{BUTTON_BORDER};
+    min-width:34px;
+    border:none;
+    border-radius:4px;
+}}
+QScrollBar::handle:horizontal:hover {{
+    background:{TEXT_MUTED};
+    border:1px solid {TEXT_MUTED};
+}}
+QScrollBar::handle:horizontal:pressed {{
+    background:{ACCENT_COLOR};
+    border:1px solid {ACCENT_COLOR};
+}}
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {{
+    width:0;
+    background:transparent;
+    border:none;
+}}
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {{
+    background:transparent;
+}}
+QAbstractScrollArea::corner {{
+    background:transparent;
+    border:none;
+}}
+"""
 
 def _polish(widget):
 
 
     if isinstance(widget, QMenu):
         return
+    if isinstance(widget, QAbstractScrollArea):
+        enable_smooth_scrolling(widget)
+        if not getattr(widget, "_cloud_scrollbar_styled", False):
+            widget.setStyleSheet(
+                widget.styleSheet() + "\n" + SCROLLBAR_STYLE
+            )
+            widget._cloud_scrollbar_styled = True
     font = widget.font()
     font.setWeight(FONT_WEIGHT)
     font.setBold(True)

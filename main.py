@@ -3,23 +3,33 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import config as config_module
+from debug_console import (
+    install_qt_message_capture,
+    set_debug_console,
+)
+
+set_debug_console(config_module.DEBUG_ENABLED)
+
 from font_config import setup_hidpi_scaling
 
 setup_hidpi_scaling()
 
-from PySide6.QtCore import QByteArray, QEasingCurve, QPropertyAnimation, QRectF, QSize, QTimer, Qt, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPainter, QPainterPath, QPixmap
+from PySide6.QtCore import QByteArray, QEasingCurve, QPropertyAnimation, QRectF, QSize, QTimer, Qt
+from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPixmap
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import QApplication, QAbstractItemView, QDialog, QFileDialog, QGraphicsOpacityEffect, QHBoxLayout, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QProgressDialog, QPushButton, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow, QMenu, QPushButton, QStackedWidget, QVBoxLayout, QWidget
 from qasync import QEventLoop, asyncClose
 
+install_qt_message_capture()
+
 from config import *
+from dropdown_ui import QDialog, QFileDialog, QInputDialog, QMessageBox, QProgressDialog
 from account_sync import (
     AccountPanel,
     CloudRequestWorker,
@@ -45,9 +55,9 @@ from playlist_index import PlaylistSummaryLoader, flush_playlist_writes
 from recommendation_widgets import FlowLayout, RecommendationCard
 from smooth_scroll import SmoothScrollArea
 from threads import BackgroundDownloader, RecommendationFetcher, SearchWorker
+from thumbnail_toolbar import ThumbnailToolbar
 from utils import colored_icon, rounded_cover_pixmap
 import discord_rpc
-import config as config_module
 from settings_dialog import SettingsDialog
 
 MENU_ICON_SIZE = 28
@@ -129,6 +139,7 @@ class MusicPlayer(QMainWindow):
         self._playlist_list_generation = 0
         self._prepare_paths()
         self._build()
+        self.thumbnail_toolbar = ThumbnailToolbar(self, self.playlist_view)
         self._restore_account()
         self.load_playlists()
         self.refresh_recommendation()
@@ -263,12 +274,20 @@ class MusicPlayer(QMainWindow):
         support.clicked.connect(self._show_donation_dialog)
         github = QPushButton()
         github.setIcon(make_svg_icon(GITHUB_SVG))
-        github.setToolTip("Open GitHub")
-        github.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://github.com/finchproffe")))
+        github.setToolTip("GitHub")
+        github.clicked.connect(
+            lambda: self._show_link_menu(
+                github, "GitHub", "https://github.com/finchproffe"
+            )
+        )
         telegram = QPushButton()
         telegram.setIcon(make_svg_icon(TELEGRAM_SVG))
-        telegram.setToolTip("Open Telegram")
-        telegram.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://t.me/finchreleases")))
+        telegram.setToolTip("Telegram")
+        telegram.clicked.connect(
+            lambda: self._show_link_menu(
+                telegram, "Telegram", "https://t.me/finchreleases"
+            )
+        )
         self.download_button = QPushButton()
         self.download_button.setIcon(colored_icon("download.svg", "#ffffff", 22))
         self.download_button.setToolTip("Check for CloudPlayer updates")
@@ -288,10 +307,25 @@ class MusicPlayer(QMainWindow):
         self._donation_button = support
         return row
 
+    def _show_link_menu(self, button, title, url):
+        menu = make_menu(button)
+        heading = menu.addAction(title)
+        heading.setEnabled(False)
+        address = menu.addAction(url)
+        address.setEnabled(False)
+        menu.addSeparator()
+        copy_link = menu.addAction(
+            colored_icon("copy.svg", size=MENU_ICON_SIZE), "Copy Link"
+        )
+        chosen = menu.exec(button.mapToGlobal(button.rect().topRight()))
+        if chosen is copy_link:
+            QApplication.clipboard().setText(url)
+
     def _show_settings_dialog(self):
         username = str((self.account_user or {}).get("username") or "")
         dialog = SettingsDialog(
             ACCENT_COLOR,
+            config_module.DEBUG_ENABLED,
             self,
             account_username=username,
         )
@@ -301,11 +335,19 @@ class MusicPlayer(QMainWindow):
         polish_tree(dialog)
         if dialog.exec() != QDialog.Accepted:
             return
+        errors = []
         if not self._apply_accent_color(dialog.selected_color):
+            errors.append("The accent color could not be saved.")
+        if not config_module.save_debug(dialog.debug_enabled):
+            errors.append("The Debug setting could not be saved.")
+        elif not set_debug_console(dialog.debug_enabled):
+            config_module.save_debug(False)
+            errors.append("The Debug console could not be opened.")
+        if errors:
             QMessageBox.warning(
                 self,
                 "Settings",
-                "The accent color could not be saved.",
+                "\n".join(errors),
             )
 
     def _delete_account(self, settings_dialog):
@@ -886,11 +928,16 @@ class MusicPlayer(QMainWindow):
             return
         self.update_progress = QProgressDialog("Downloading and verifying the update...", "Cancel", 0, 100, self)
         self.update_progress.setWindowModality(Qt.WindowModal)
+        self.update_progress.setMinimumDuration(0)
+        self.update_progress.setAutoClose(False)
+        self.update_progress.setAutoReset(False)
         self.update_downloader = UpdateDownloader(release, self)
         self.update_downloader.progress.connect(self.update_progress.setValue)
         self.update_downloader.completed.connect(self._update_downloaded)
         self.update_downloader.failed.connect(self._update_download_failed)
         self.update_progress.canceled.connect(self.update_downloader.requestInterruption)
+        polish_tree(self.update_progress)
+        self.update_progress.show()
         self.update_downloader.start()
 
     def _update_downloaded(self, filename):
@@ -911,12 +958,22 @@ class MusicPlayer(QMainWindow):
         path = Path(filename).resolve()
         if not path.is_file():
             return
-        if os.name == "nt":
-            subprocess.Popen(["explorer.exe", "/select,", str(path)])
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", "-R", str(path)])
-        else:
-            subprocess.Popen(["xdg-open", str(path.parent)])
+        menu = make_menu(self.download_button)
+        heading = menu.addAction("Downloaded Update")
+        heading.setEnabled(False)
+        location = menu.addAction(str(path))
+        location.setEnabled(False)
+        menu.addSeparator()
+        copy_path = menu.addAction(
+            colored_icon("copy.svg", size=MENU_ICON_SIZE), "Copy Path"
+        )
+        chosen = menu.exec(
+            self.download_button.mapToGlobal(
+                self.download_button.rect().topRight()
+            )
+        )
+        if chosen is copy_path:
+            QApplication.clipboard().setText(str(path))
 
     def _style(self):
         self.setStyleSheet(f"""
@@ -1445,6 +1502,8 @@ class MusicPlayer(QMainWindow):
             self.update_downloader.requestInterruption()
             self.update_downloader.wait(3000)
         await self.p2p.close()
+        if self.thumbnail_toolbar is not None:
+            self.thumbnail_toolbar.close()
         discord_rpc.close()
         event.accept()
 

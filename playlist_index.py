@@ -19,7 +19,6 @@ def _read_json(path, default):
 
 
 def load_playlist_snapshot(playlists_path, name, should_stop=None):
-    """Read and reconcile a playlist. Safe to call outside the UI thread."""
     playlists_path = Path(playlists_path)
     playlist_folder = playlists_path / str(name)
     songs_path = playlist_folder / "songs"
@@ -152,8 +151,6 @@ class PlaylistSummaryLoader(QThread):
 
 
 class _PlaylistMetadataWriter:
-    """Coalescing daemon writer; large order JSON never blocks the UI."""
-
     def __init__(self):
         self._condition = threading.Condition()
         self._pending = {}

@@ -111,7 +111,13 @@ class PlaylistStorageMixin:
         self._begin_population(
             self._playlist_order, self._pending_selection_name
         )
+        playback_changed = getattr(self, "_playback_order_changed", None)
+        if playback_changed is not None:
+            playback_changed()
         self._sync_current_track_index()
+        queue_changed = getattr(self, "_queue_order_changed", None)
+        if queue_changed is not None:
+            queue_changed()
         updated = getattr(self, "playlist_updated", None)
         if updated is not None:
             updated.emit(name)
@@ -187,6 +193,12 @@ class PlaylistStorageMixin:
             schedule_playlist_write(
                 self.current_playlist, order, self._playlist_metadata
             )
+        playback_changed = getattr(self, "_playback_order_changed", None)
+        if playback_changed is not None:
+            playback_changed()
+        queue_changed = getattr(self, "_queue_order_changed", None)
+        if queue_changed is not None:
+            queue_changed()
 
     def _ordered_song_files(self):
         self._ensure_storage_state()
@@ -250,7 +262,9 @@ class PlaylistStorageMixin:
 
     def _sync_current_track_index(self):
         self._ensure_storage_state()
-        self.current_track_index = self._row_by_filename.get(
+        playback_rows = getattr(self, "_playback_row_by_filename", None)
+        rows = playback_rows if playback_rows is not None else self._row_by_filename
+        self.current_track_index = rows.get(
             self.current_track_filename, -1
         )
 
@@ -339,13 +353,18 @@ class PlaylistStorageMixin:
         if not filename:
             return
         key = str(filename)
-        self._track_metadata_cache.pop(key, None)
+        for cached_key in list(self._track_metadata_cache):
+            if cached_key == key or Path(cached_key).name == key:
+                self._track_metadata_cache.pop(cached_key, None)
         self._row_display_cache.pop(key, None)
 
     def _metadata(self, file):
         self._ensure_storage_state()
         file = Path(file)
-        cache_key = file.name
+        try:
+            cache_key = str(file.resolve())
+        except OSError:
+            cache_key = str(file)
         cached = self._track_metadata_cache.get(cache_key)
         if cached is not None:
             self._track_metadata_cache.move_to_end(cache_key)

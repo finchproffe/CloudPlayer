@@ -8,10 +8,11 @@ from pathlib import Path
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QInputDialog, QMessageBox, QPushButton,
+    QApplication, QPushButton,
 )
 
 from config import PLAYLISTS_PATH
+from dropdown_ui import QFileDialog, QInputDialog, QMessageBox
 from playlist_index import flush_playlist_writes
 
 _INSTALLED = False

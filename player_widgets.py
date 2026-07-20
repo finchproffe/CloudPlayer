@@ -1,20 +1,21 @@
 import random
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Qt, QUrl, Signal, Slot
+from PySide6.QtCore import QEasingCurve, Property, QPropertyAnimation, QSize, QTimer, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import (
-    QKeySequence, QPixmap, QShortcut,
+    QColor, QKeySequence, QPainter, QPen, QPixmap, QShortcut,
 )
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
-    QAbstractItemView, QHBoxLayout, QInputDialog, QLabel, QMenu, QPushButton,
-    QTextEdit, QVBoxLayout, QWidget,
+    QAbstractItemView, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QMenu, QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from config import (
-    ACCENT_COLOR, BUTTON_BORDER, PANEL_BG, PLAYLISTS_PATH, TEXT_COLOR,
-    TEXT_MUTED, SAVED_VOLUME, save_volume,
+    ACCENT_COLOR, BG_COLOR, BUTTON_BG, BUTTON_BORDER, BUTTON_HOVER, PANEL_BG,
+    PLAYLISTS_PATH, TEXT_COLOR, TEXT_MUTED, SAVED_VOLUME, save_volume,
 )
+from dropdown_ui import QDialog, QInputDialog
 from threads import TrackMetaFetcher
 from utils import colored_icon, format_time, rounded_cover_pixmap
 import discord_rpc
@@ -52,6 +53,134 @@ def make_menu(_parent=None):
     return menu
 
 
+class QueueListWidget(QListWidget):
+    reordered = Signal(list)
+
+    def dropEvent(self, event):
+        super().dropEvent(event)
+        filenames = [
+            self.item(row).data(Qt.UserRole)
+            for row in range(self.count())
+            if self.item(row).data(Qt.UserRole)
+        ]
+        QTimer.singleShot(
+            0,
+            lambda order=filenames: self.reordered.emit(order),
+        )
+
+
+class QueueDialog(QDialog):
+    queue_reordered = Signal(list)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Up Next")
+        self.setFixedWidth(480)
+        self.setMinimumHeight(390)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 24, 24, 22)
+        root.setSpacing(12)
+        title = QLabel("Up Next")
+        title.setStyleSheet("font-size:23px;font-weight:700")
+        self.mode = QLabel("Normal Order")
+        self.mode.setStyleSheet(
+            f"color:{TEXT_MUTED};font-size:12px;font-weight:700"
+        )
+        self.tracks = QueueListWidget()
+        self.tracks.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.tracks.setDragDropMode(QAbstractItemView.InternalMove)
+        self.tracks.setDefaultDropAction(Qt.MoveAction)
+        self.tracks.setDragDropOverwriteMode(False)
+        self.tracks.setDropIndicatorShown(True)
+        self.tracks.setSpacing(4)
+        self.tracks.reordered.connect(self.queue_reordered.emit)
+        root.addWidget(title)
+        root.addWidget(self.mode)
+        root.addWidget(self.tracks, 1)
+        self.setStyleSheet(
+            f"QDialog{{background:{BG_COLOR};color:{TEXT_COLOR}}}"
+            f"QListWidget{{background:{PANEL_BG};color:{TEXT_COLOR};border:1px solid "
+            f"{BUTTON_BORDER};border-radius:8px;padding:7px;outline:0}}"
+            f"QListWidget::item{{background:{BUTTON_BG};border:1px solid {BUTTON_BORDER};"
+            "border-radius:6px;padding:10px 12px;margin:2px}}"
+            f"QListWidget::item:hover{{background:{BUTTON_HOVER};border-color:{ACCENT_COLOR}}}"
+        )
+
+    def set_queue(self, mode, rows, draggable=True):
+        self.mode.setText(mode)
+        self.tracks.clear()
+        self.tracks.setDragEnabled(draggable)
+        self.tracks.setAcceptDrops(draggable)
+        self.tracks.setDragDropMode(
+            QAbstractItemView.InternalMove
+            if draggable
+            else QAbstractItemView.NoDragDrop
+        )
+        self.tracks.setCursor(
+            Qt.OpenHandCursor if draggable else Qt.ArrowCursor
+        )
+        if not rows:
+            item = QListWidgetItem("No upcoming tracks")
+            item.setForeground(Qt.gray)
+            self.tracks.addItem(item)
+            return
+        for index, row in enumerate(rows, 1):
+            title = str(row.get("title") or "Unknown Track")
+            artist = str(row.get("artist") or "Unknown Artist")
+            item = QListWidgetItem(f"{index}.  {title}\n     {artist}")
+            item.setData(Qt.UserRole, row.get("filename"))
+            self.tracks.addItem(item)
+
+
+class AnimatedRepeatButton(QPushButton):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._slash_progress = 1.0
+        self.setIcon(colored_icon("repeat.svg"))
+        self.animation = QPropertyAnimation(self, b"slashProgress", self)
+        self.animation.setDuration(380)
+        self.animation.setEasingCurve(QEasingCurve.InOutCubic)
+
+    def _get_slash_progress(self):
+        return self._slash_progress
+
+    def _set_slash_progress(self, value):
+        self._slash_progress = max(0.0, min(1.0, float(value)))
+        self.update()
+
+    slashProgress = Property(
+        float,
+        _get_slash_progress,
+        _set_slash_progress,
+    )
+
+    def set_repeat_enabled(self, enabled):
+        self.animation.stop()
+        self.animation.setStartValue(self._slash_progress)
+        self.animation.setEndValue(0.0 if enabled else 1.0)
+        self.animation.start()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._slash_progress <= 0.001:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setOpacity(min(1.0, self._slash_progress * 1.35))
+        pen = QPen(QColor(TEXT_COLOR), 2.25)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        center = self.rect().center()
+        span = 11.0 * self._slash_progress
+        painter.drawLine(
+            round(center.x() - span),
+            round(center.y() - span),
+            round(center.x() + span),
+            round(center.y() + span),
+        )
+        painter.end()
+
+
 class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
     back_requested = Signal()
     sync_requested = Signal(str, int)
@@ -65,9 +194,16 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
         self.current_cover_pixmap = None
         self.current_track_filename = None
         self.current_track_path = None
+        self.playing_playlist = None
+        self.playing_playlist_path = None
+        self._playback_order = []
+        self._playback_row_by_filename = {}
         self._current_metadata = {}
         self.is_shuffled = False
         self.repeat_track = False
+        self._shuffle_upcoming = []
+        self._shuffle_anchor = None
+        self._queue_dialog = None
         self.meta_thread = None
         self._metadata_generation = 0
         self._order_undo_stack = []
@@ -222,15 +358,20 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
         self.play_btn.setStyleSheet(f"background:{ACCENT_COLOR}")
         self.next_btn = QPushButton()
         self.next_btn.setIcon(colored_icon("next.svg"))
-        self.repeat_btn = QPushButton()
-        self.repeat_btn.setIcon(colored_icon("repeat-off.svg"))
+        self.repeat_btn = AnimatedRepeatButton()
+        self.queue_btn = QPushButton()
+        self.queue_btn.setIcon(colored_icon("queue.svg"))
+        self.queue_btn.setToolTip("Show next 5 tracks")
+        self.queue_btn.setAccessibleName("Playback queue")
         for button in (
+            self.queue_btn,
             self.prev_btn,
             self.play_btn,
             self.next_btn,
             self.repeat_btn,
         ):
             button.setFixedSize(40, 40)
+            button.setIconSize(QSize(24, 24))
             controls.addWidget(button)
         controls.addStretch()
         root.addLayout(controls)
@@ -255,6 +396,7 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
         self.play_btn.clicked.connect(self.toggle_playback)
         self.next_btn.clicked.connect(self.play_next_track)
         self.repeat_btn.clicked.connect(self.toggle_repeat)
+        self.queue_btn.clicked.connect(self.show_queue)
         self.shuffle_btn.clicked.connect(self.toggle_shuffle)
         add_song.clicked.connect(self.add_song)
         self.volume_slider.valueChanged.connect(self._set_volume)
@@ -332,7 +474,6 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
             self._restore_current_display()
 
     def leave_playlist(self):
-        self.reset_current_track()
         self.cancel_playlist_loading()
         self.current_playlist = None
         self.current_playlist_path = None
@@ -350,8 +491,13 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
         self.current_track_index = -1
         self.current_track_filename = None
         self.current_track_path = None
+        self.playing_playlist = None
+        self.playing_playlist_path = None
+        self._playback_order = []
+        self._playback_row_by_filename = {}
         self._current_metadata = {}
         self._active_room_request = None
+        self._reset_shuffle_queue()
         self._show_idle_display(True)
         discord_rpc.clear_activity()
 
@@ -365,12 +511,7 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
                 )
             except OSError:
                 matches_path = Path(self.current_track_path) == path
-        matches_name = (
-            self.current_playlist_path is not None
-            and path.parent == self.current_playlist_path
-            and path.name == self.current_track_filename
-        )
-        if matches_path or matches_name:
+        if matches_path:
             self.reset_current_track()
             return True
         return False
@@ -386,8 +527,6 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
                 pass
         if self.current_playlist != name:
             return
-        if self.player.source().isValid():
-            self.reset_current_track()
         self.cancel_playlist_loading()
         self.current_playlist = None
         self.current_playlist_path = None
@@ -397,6 +536,51 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
         self.songs_list.clear()
         self._order_undo_stack.clear()
 
+    def _activate_playback_context(self, path, filename, index, preserve_queue):
+        path = Path(path)
+        current_path = Path(self.current_playlist_path) if self.current_playlist_path else None
+        playback_path = Path(self.playing_playlist_path) if self.playing_playlist_path else None
+        same_playback = playback_path is not None and path.parent == playback_path
+        same_playlist = current_path is not None and path.parent == current_path
+        if same_playback:
+            playlist = self.playing_playlist
+            order = list(self._playback_order)
+        elif same_playlist:
+            playlist = self.current_playlist
+            order = list(self._playlist_order)
+        else:
+            playlist = path.parent.parent.name if path.parent.name == "songs" else None
+            order = []
+        if not order:
+            order = [filename]
+        elif filename not in order:
+            insert_at = max(0, min(int(index), len(order))) if index >= 0 else len(order)
+            order.insert(insert_at, filename)
+        self.playing_playlist = playlist
+        self.playing_playlist_path = path.parent
+        self._playback_order = order
+        self._playback_row_by_filename = {
+            name: row for row, name in enumerate(order)
+        }
+        self.current_track_index = self._playback_row_by_filename.get(filename, 0)
+        if preserve_queue:
+            self._shuffle_anchor = filename
+            self._refresh_queue_dialog()
+        else:
+            self._reset_shuffle_queue()
+
+    def _playback_order_changed(self):
+        if self.playing_playlist != self.current_playlist:
+            return
+        self._playback_order = list(self._playlist_order)
+        self._playback_row_by_filename = {
+            filename: row
+            for row, filename in enumerate(self._playback_order)
+        }
+        self.current_track_index = self._playback_row_by_filename.get(
+            self.current_track_filename, -1
+        )
+
     def play_file(
         self,
         file,
@@ -404,6 +588,7 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
         index=-1,
         broadcast=True,
         autoplay=True,
+        preserve_queue=False,
     ):
         path = Path(file)
         if broadcast and self._room_connected():
@@ -429,8 +614,13 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
             return
 
         title, artist, _ = self._metadata(path)
-        self.current_track_index = index
         self.current_track_filename = filename or path.name
+        self._activate_playback_context(
+            path,
+            self.current_track_filename,
+            index,
+            preserve_queue,
+        )
         self.current_track_path = path.resolve()
         self._current_metadata = {
             "title": title,
@@ -460,6 +650,7 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
         self.meta_thread.start()
         if broadcast and not self._room_connected():
             self.sync_requested.emit("play", 0)
+        self._refresh_queue_dialog()
 
     def _find_local_track(self, track):
         filename = str(track.get("filename") or "")
@@ -522,14 +713,11 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
         self.current_track_index = int(packet.get("queue_index", -1))
         self.player.pause()
         self._network_manager.release_streams_except(track.get("stream_id"))
+        self._refresh_queue_dialog()
 
     def apply_remote_repeat(self, enabled):
         self.repeat_track = bool(enabled)
-        self.repeat_btn.setIcon(
-            colored_icon(
-                "repeat.svg" if self.repeat_track else "repeat-off.svg"
-            )
-        )
+        self.repeat_btn.set_repeat_enabled(self.repeat_track)
 
     def apply_metadata(self, data):
         self._current_metadata = dict(data)
@@ -620,37 +808,214 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
 
     def toggle_shuffle(self):
         self.is_shuffled = not self.is_shuffled
+        self._reset_shuffle_queue()
         self.shuffle_btn.setStyleSheet(
             f"background:{ACCENT_COLOR}" if self.is_shuffled else ""
         )
+
+    def _reset_shuffle_queue(self):
+        self._shuffle_upcoming = []
+        self._shuffle_anchor = self.current_track_filename
+        self._refresh_queue_dialog()
+
+    def _queue_order_changed(self):
+        valid = set(self._playback_order)
+        self._shuffle_upcoming = [
+            filename
+            for filename in self._shuffle_upcoming
+            if filename in valid
+        ]
+        if self._shuffle_anchor not in valid:
+            self._shuffle_anchor = self.current_track_filename
+        self._refresh_queue_dialog()
+
+    def _shuffle_filenames(self, limit):
+        order = list(self._playback_order)
+        if not order:
+            return []
+        if self._shuffle_anchor != self.current_track_filename:
+            self._shuffle_upcoming = []
+            self._shuffle_anchor = self.current_track_filename
+        valid = set(order)
+        self._shuffle_upcoming = [
+            filename
+            for filename in self._shuffle_upcoming
+            if filename in valid and filename != self.current_track_filename
+        ]
+        available_count = len(order)
+        if self.current_track_filename in valid and available_count > 1:
+            available_count -= 1
+        target_count = min(limit, max(1, available_count))
+        while len(self._shuffle_upcoming) < target_count:
+            candidates = [
+                filename
+                for filename in order
+                if filename != self.current_track_filename
+                and filename not in self._shuffle_upcoming
+            ]
+            if not candidates and len(order) == 1:
+                candidates = list(order)
+            if not candidates:
+                break
+            random.shuffle(candidates)
+            needed = target_count - len(self._shuffle_upcoming)
+            self._shuffle_upcoming.extend(candidates[:needed])
+        return self._shuffle_upcoming[:target_count]
+
+    def _normal_filenames(self, limit):
+        count = len(self._playback_order)
+        if count <= 1:
+            return []
+        current = self.current_track_index
+        if current < 0 or current >= count:
+            current = self._playback_row_by_filename.get(
+                self.current_track_filename,
+                0,
+            )
+        return [
+            self._playback_order[(current + offset) % count]
+            for offset in range(1, min(limit, count - 1) + 1)
+        ]
+
+    def _apply_queue_reorder(self, filenames):
+        filenames = [str(filename) for filename in filenames if filename]
+        if self._room_connected() or len(filenames) < 2:
+            self._refresh_queue_dialog()
+            return
+        if self.is_shuffled:
+            visible = set(filenames)
+            existing = list(self._shuffle_upcoming)
+            if visible != set(existing[:len(filenames)]):
+                self._refresh_queue_dialog()
+                return
+            self._shuffle_upcoming = filenames + [
+                filename
+                for filename in existing
+                if filename not in visible
+            ]
+            self._refresh_queue_dialog()
+            return
+        count = len(self._playback_order)
+        if count <= 1:
+            self._refresh_queue_dialog()
+            return
+        current = self.current_track_index
+        if current < 0 or current >= count:
+            current = self._playback_row_by_filename.get(
+                self.current_track_filename,
+                0,
+            )
+        positions = [
+            (current + offset) % count
+            for offset in range(1, min(len(filenames), count - 1) + 1)
+        ]
+        existing = [self._playback_order[position] for position in positions]
+        if len(positions) != len(filenames) or set(existing) != set(filenames):
+            self._refresh_queue_dialog()
+            return
+        for position, filename in zip(positions, filenames):
+            self._playback_order[position] = filename
+        self._playback_row_by_filename = {
+            filename: row
+            for row, filename in enumerate(self._playback_order)
+        }
+        self.current_track_index = self._playback_row_by_filename.get(
+            self.current_track_filename,
+            current,
+        )
+        self._refresh_queue_dialog()
+
+    def _room_queue_rows(self, limit):
+        manager = self._network_manager
+        queue = list(getattr(manager, "_room_queue", []) or [])
+        if not queue:
+            return []
+        current = int(getattr(manager, "_room_queue_index", -1))
+        return [
+            dict(queue[(current + offset) % len(queue)])
+            for offset in range(1, min(limit, len(queue)) + 1)
+        ]
+
+    def _queue_rows(self, limit=5):
+        if self._room_connected():
+            return "Listen Together", self._room_queue_rows(limit)
+        mode = "Shuffle Mode" if self.is_shuffled else "Normal Order"
+        if not self.playing_playlist_path:
+            return mode, []
+        filenames = (
+            self._shuffle_filenames(limit)
+            if self.is_shuffled
+            else self._normal_filenames(limit)
+        )
+        rows = []
+        for filename in filenames:
+            title, artist, _data = self._metadata(
+                self.playing_playlist_path / filename
+            )
+            rows.append(
+                {
+                    "filename": filename,
+                    "title": title,
+                    "artist": artist,
+                }
+            )
+        return mode, rows
+
+    def _refresh_queue_dialog(self):
+        if self._queue_dialog is None:
+            return
+        mode, rows = self._queue_rows()
+        self._queue_dialog.set_queue(
+            mode,
+            rows,
+            not self._room_connected() and len(rows) > 1,
+        )
+
+    def show_queue(self):
+        if self._queue_dialog is None:
+            self._queue_dialog = QueueDialog(self)
+            self._queue_dialog.queue_reordered.connect(
+                self._apply_queue_reorder
+            )
+        self._refresh_queue_dialog()
+        self._queue_dialog.show()
+        self._queue_dialog.raise_()
 
     def play_next_track(self):
         if self._room_connected():
             self._network_manager.skip(1)
             return
-        count = len(self._playlist_order)
+        count = len(self._playback_order)
         if not count:
             return
-        row = (
-            random.randrange(count)
-            if self.is_shuffled
-            else (self.current_track_index + 1) % count
-        )
-        filename = self._playlist_order[row]
+        if self.is_shuffled:
+            upcoming = self._shuffle_filenames(1)
+            if not upcoming:
+                return
+            filename = self._shuffle_upcoming.pop(0)
+            row = self._playback_row_by_filename.get(filename, 0)
+            self._shuffle_anchor = filename
+        else:
+            row = (self.current_track_index + 1) % count
+            filename = self._playback_order[row]
         self.play_file(
-            self.current_playlist_path / filename, filename, row
+            self.playing_playlist_path / filename,
+            filename,
+            row,
+            preserve_queue=self.is_shuffled,
         )
+        self._refresh_queue_dialog()
 
     def play_prev_track(self):
         if self._room_connected():
             self._network_manager.skip(-1)
             return
-        count = len(self._playlist_order)
+        count = len(self._playback_order)
         if count:
             row = (self.current_track_index - 1) % count
-            filename = self._playlist_order[row]
+            filename = self._playback_order[row]
             self.play_file(
-                self.current_playlist_path / filename, filename, row
+                self.playing_playlist_path / filename, filename, row
             )
 
     play_next = play_next_track

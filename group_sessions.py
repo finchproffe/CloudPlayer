@@ -6,10 +6,11 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
+    QPushButton, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from config import ACCENT_COLOR, BUTTON_BG, BUTTON_BORDER, ELEVATED_BG, TEXT_COLOR, TEXT_MUTED
+from dropdown_ui import QMessageBox
 from network_sync_manager import NetworkSyncManager
 
 FIELD_STYLE = f"""

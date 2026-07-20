@@ -3,8 +3,7 @@ import re
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QColorDialog,
-    QDialog,
+    QCheckBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -19,11 +18,13 @@ from config import (
     BUTTON_BORDER,
     BUTTON_HOVER,
     DEFAULT_ACCENT_COLOR,
+    DEFAULT_DEBUG,
     PANEL_BG,
     TEXT_COLOR,
     TEXT_MUTED,
     normalize_accent_color,
 )
+from dropdown_ui import QColorDialog, QDialog
 
 
 class SettingsDialog(QDialog):
@@ -32,6 +33,7 @@ class SettingsDialog(QDialog):
     def __init__(
         self,
         accent_color=ACCENT_COLOR,
+        debug_enabled=DEFAULT_DEBUG,
         parent=None,
         account_username=None,
     ):
@@ -40,6 +42,7 @@ class SettingsDialog(QDialog):
         self.selected_color = (
             normalize_accent_color(accent_color) or DEFAULT_ACCENT_COLOR
         )
+        self.debug_enabled = bool(debug_enabled)
         self.setWindowTitle("Settings")
         self.setMinimumWidth(460)
         self.setModal(True)
@@ -77,6 +80,22 @@ class SettingsDialog(QDialog):
         self.status.setStyleSheet(
             "color:#EF9A9A;font-size:11px;background:transparent"
         )
+
+        developer_title = QLabel("Developer")
+        developer_title.setStyleSheet(
+            "font-size:18px;font-weight:700;background:transparent"
+        )
+        developer_description = QLabel(
+            "Show a live console with stdout, stderr, warnings, Python/Qt "
+            "logging and uncaught exceptions."
+        )
+        developer_description.setWordWrap(True)
+        developer_description.setStyleSheet(
+            f"color:{TEXT_MUTED};font-size:12px;background:transparent"
+        )
+        self.debug_checkbox = QCheckBox("Enable Debug Console")
+        self.debug_checkbox.setChecked(self.debug_enabled)
+        self.debug_checkbox.toggled.connect(self._set_debug_enabled)
 
         account_title = QLabel("Account")
         account_title.setStyleSheet(
@@ -118,6 +137,10 @@ class SettingsDialog(QDialog):
         root.addWidget(self.hex_input)
         root.addWidget(self.status)
         root.addSpacing(10)
+        root.addWidget(developer_title)
+        root.addWidget(developer_description)
+        root.addWidget(self.debug_checkbox)
+        root.addSpacing(10)
         root.addWidget(account_title)
         root.addWidget(account_description)
         root.addWidget(self.delete_account_button)
@@ -127,6 +150,8 @@ class SettingsDialog(QDialog):
         self.setStyleSheet(
             f"QDialog{{background:{BG_COLOR};color:{TEXT_COLOR}}}"
             f"QLabel{{color:{TEXT_COLOR}}}"
+            f"QCheckBox{{color:{TEXT_COLOR};spacing:10px;padding:6px 0}}"
+            f"QCheckBox::indicator{{width:18px;height:18px}}"
             f"QLineEdit{{background:{PANEL_BG};color:{TEXT_COLOR};border:1px "
             f"solid {BUTTON_BORDER};border-radius:5px;padding:11px}}"
             f"QPushButton{{background:{BUTTON_BG};color:{TEXT_COLOR};border:1px "
@@ -189,8 +214,13 @@ class SettingsDialog(QDialog):
         self._update_preview()
         return True
 
+    def _set_debug_enabled(self, enabled):
+        self.debug_enabled = bool(enabled)
+
     def _reset(self):
         self.selected_color = DEFAULT_ACCENT_COLOR
+        self.debug_enabled = DEFAULT_DEBUG
+        self.debug_checkbox.setChecked(self.debug_enabled)
         self._update_preview()
 
     def _save(self):

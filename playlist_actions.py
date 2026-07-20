@@ -1,19 +1,18 @@
 
 
-import os
 import shutil
-import subprocess
-import sys
 import time
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QInputDialog, QMenu, QMessageBox,
+    QApplication, QMenu,
 )
 
 from config import ACCENT_COLOR, BUTTON_BORDER, PANEL_BG, TEXT_COLOR, TEXT_MUTED
 from dialogs import AddSongDialog
+from dropdown_ui import QFileDialog, QInputDialog, QMessageBox
 from playlist_components import CoverPreviewDialog
 from utils import colored_icon
 
@@ -90,7 +89,7 @@ class PlaylistActionsMixin:
         menu.addSeparator()
         folder = menu.addAction(
             colored_icon("folder.svg", size=MENU_ICON_SIZE),
-            "Open in Folder",
+            "Folder Path",
         )
         for action in (play, rename, folder):
             action.setEnabled(single_selection)
@@ -120,14 +119,25 @@ class PlaylistActionsMixin:
                     )
                     return
                 old_name = path.name
+                playing_path = None
+                if self.current_track_path is not None:
+                    try:
+                        playing_path = Path(self.current_track_path).resolve()
+                    except OSError:
+                        playing_path = Path(self.current_track_path)
+                try:
+                    source_path = path.resolve()
+                except OSError:
+                    source_path = path
+                is_playing = playing_path == source_path
                 path.rename(destination)
                 self._move_sidecars(path, destination)
+                if is_playing:
+                    self.current_track_filename = destination.name
+                    self.current_track_path = destination.resolve()
                 self._replace_song_in_order(
                     old_name, destination.name
                 )
-                if self.current_track_filename == old_name:
-                    self.current_track_filename = destination.name
-                    self.current_track_path = destination.resolve()
                 self.songs_list.viewport().update()
                 self.playlist_updated.emit(self.current_playlist)
         elif chosen is duplicate:
@@ -183,9 +193,6 @@ class PlaylistActionsMixin:
                         failures.append(f"{deleted_name}: {exc}")
                         continue
                     deleted.append(deleted_name)
-                    if self.current_track_filename == deleted_name:
-                        self.current_track_filename = None
-                        self.current_track_index = -1
                 self._remove_songs_from_order(deleted)
                 self.playlist_updated.emit(self.current_playlist)
                 if failures:
@@ -196,12 +203,18 @@ class PlaylistActionsMixin:
                         + "\n".join(failures[:3]),
                     )
         elif chosen is folder:
-            if os.name == "nt":
-                subprocess.Popen(["explorer", "/select,", str(path)])
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", "-R", str(path)])
-            else:
-                subprocess.Popen(["xdg-open", str(path.parent)])
+            path_menu = make_menu(self)
+            location = path_menu.addAction(str(path))
+            location.setEnabled(False)
+            path_menu.addSeparator()
+            copy_path = path_menu.addAction(
+                colored_icon("copy.svg", size=MENU_ICON_SIZE), "Copy Path"
+            )
+            selected = path_menu.exec(
+                self.songs_list.viewport().mapToGlobal(position)
+            )
+            if selected is copy_path:
+                QGuiApplication.clipboard().setText(str(path))
 
     @staticmethod
     def _unlink_track(path):

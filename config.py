@@ -49,6 +49,7 @@ UI_SCALE = 1.0
 
 DEFAULT_ACCENT_COLOR = "#0D47A1"
 DEFAULT_VOLUME = 70
+DEFAULT_DEBUG = False
 SETTINGS_PATH = DOCS_PATH / "settings.json"
 
 
@@ -66,6 +67,16 @@ def normalize_volume(value):
         return DEFAULT_VOLUME
 
 
+def normalize_debug(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().casefold() in {"1", "true", "yes", "on", "enabled"}
+    return DEFAULT_DEBUG
+
+
 def read_ui_settings():
     try:
         payload = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
@@ -79,6 +90,7 @@ def read_ui_settings():
     return {
         "accent_color": color or DEFAULT_ACCENT_COLOR,
         "volume": normalize_volume(payload.get("volume", DEFAULT_VOLUME)),
+        "debug": normalize_debug(payload.get("debug", DEFAULT_DEBUG)),
     }
 
 
@@ -90,6 +102,7 @@ def _write_ui_settings(settings):
             or DEFAULT_ACCENT_COLOR
         ),
         "volume": normalize_volume(settings.get("volume", DEFAULT_VOLUME)),
+        "debug": normalize_debug(settings.get("debug", DEFAULT_DEBUG)),
     }
     try:
         DOCS_PATH.mkdir(parents=True, exist_ok=True)
@@ -117,6 +130,17 @@ def save_accent_color(value):
     return color
 
 
+def save_debug(value):
+    global DEBUG_ENABLED
+    enabled = normalize_debug(value)
+    settings = read_ui_settings()
+    settings["debug"] = enabled
+    if not _write_ui_settings(settings):
+        return False
+    DEBUG_ENABLED = enabled
+    return True
+
+
 def save_volume(value):
     global SAVED_VOLUME
     volume = normalize_volume(value)
@@ -131,6 +155,7 @@ def save_volume(value):
 _UI_SETTINGS = read_ui_settings()
 ACCENT_COLOR = _UI_SETTINGS["accent_color"]
 SAVED_VOLUME = _UI_SETTINGS["volume"]
+DEBUG_ENABLED = _UI_SETTINGS["debug"]
 
 
 GENIUS_CLIENT_ID = str(
