@@ -49,6 +49,7 @@ class AddSongDialog(QDialog):
         self.download_index = 0
         self.download_successes = 0
         self.download_failures = []
+        self.downloaded_paths = []
         self.setup_ui()
 
     def setup_ui(self):
@@ -96,10 +97,18 @@ class AddSongDialog(QDialog):
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setStyleSheet(
-            f"QProgressBar{{background:{PANEL_BG};color:{TEXT_COLOR};"
-            f"border:1px solid {BUTTON_BORDER};border-radius:6px;"
-            "height:18px;text-align:center}}"
-            f"QProgressBar::chunk{{background:{ACCENT_COLOR};border-radius:5px}}"
+            f"QProgressBar {{"
+            f"background-color: {PANEL_BG};"
+            f"color: {TEXT_COLOR};"
+            f"border: 1px solid {BUTTON_BORDER};"
+            f"border-radius: 6px;"
+            f"min-height: 18px;"
+            f"text-align: center;"
+            f"}}"
+            f"QProgressBar::chunk {{"
+            f"background-color: {ACCENT_COLOR};"
+            f"border-radius: 5px;"
+            f"}}"
         )
         progress_layout.addStretch()
         progress_layout.addWidget(self.progress_title)
@@ -235,6 +244,8 @@ class AddSongDialog(QDialog):
         self.active_download = None
         if ok:
             self.download_successes += 1
+            if worker.last_downloaded_path:
+                self.downloaded_paths.append(worker.last_downloaded_path)
         else:
             label = self.download_queue[self.download_index]["label"]
             self.download_failures.append((label, message))
@@ -287,7 +298,9 @@ class AddSongDialog(QDialog):
         for filename in files:
             source = Path(filename)
             if source.suffix.lower() in AUDIO_EXTENSIONS:
-                shutil.copy2(source, self.playlist_path / source.name)
+                destination = self.playlist_path / source.name
+                shutil.copy2(source, destination)
+                self.downloaded_paths.append(destination)
                 copied += 1
         if copied:
             self.accept()

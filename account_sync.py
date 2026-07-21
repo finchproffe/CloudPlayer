@@ -583,6 +583,40 @@ class SupabaseClient:
             )
         return self.load_links(user_id, admin=True)
 
+    def unsynchronize_matching(self, user_id, playlist_names, tracks):
+        playlists = {
+            str(name or "").strip().casefold()
+            for name in playlist_names or []
+            if str(name or "").strip()
+        }
+        track_keys = {
+            (
+                str(track[0] or "").strip().casefold(),
+                str(track[1] or "").strip(),
+            )
+            for track in tracks or []
+            if isinstance(track, (list, tuple))
+            and len(track) >= 2
+            and str(track[0] or "").strip()
+            and str(track[1] or "").strip()
+        }
+        rows = self.load_links(user_id, admin=True)
+        link_ids = [
+            row.get("id")
+            for row in rows
+            if (
+                str(row.get("playlist_name") or "").strip().casefold()
+                in playlists
+                or (
+                    str(row.get("playlist_name") or "").strip().casefold(),
+                    str(row.get("url") or "").strip(),
+                )
+                in track_keys
+            )
+            and row.get("id") is not None
+        ]
+        return self.unsynchronize(user_id, link_ids) if link_ids else rows
+
     def delete_account(self, user_id):
         user_id = str(user_id or "").strip()
         if not user_id:

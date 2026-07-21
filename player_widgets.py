@@ -7,7 +7,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
-    QAbstractItemView, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QApplication, QAbstractItemView, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
     QMenu, QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
 
@@ -239,6 +239,7 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
     back_requested = Signal()
     sync_requested = Signal(str, int)
     playlist_updated = Signal(str)
+    tracks_deleted = Signal(str, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -584,6 +585,8 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
 
     def reset_current_track(self):
         self._metadata_generation += 1
+        if self.meta_thread is not None and self.meta_thread.isRunning():
+            self.meta_thread.requestInterruption()
         self.player.stop()
         self.player.setSource(QUrl())
         self.current_track_index = -1
@@ -611,28 +614,45 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
                 matches_path = Path(self.current_track_path) == path
         if matches_path:
             self.reset_current_track()
-            return True
-        return False
+            QApplication.processEvents()
+        release = getattr(self._network_manager, "release_local_path", None)
+        if release is not None:
+            release(path)
+            QApplication.processEvents()
+        return matches_path
 
     def release_playlist(self, name):
-        self.forget_playlist(name)
         folder = PLAYLISTS_PATH / str(name) / "songs"
+        contains_current_track = False
         if self.current_track_path is not None:
             try:
-                if Path(self.current_track_path).resolve().parent == folder.resolve():
-                    self.reset_current_track()
+                contains_current_track = (
+                    Path(self.current_track_path).resolve().parent
+                    == folder.resolve()
+                )
             except OSError:
-                pass
-        if self.current_playlist != name:
-            return
-        self.cancel_playlist_loading()
-        self.current_playlist = None
-        self.current_playlist_path = None
-        self._playlist_order = []
-        self._row_by_filename = {}
-        self.playlist_name.setText("Playlist")
-        self.songs_list.clear()
-        self._order_undo_stack.clear()
+                contains_current_track = (
+                    Path(self.current_track_path).parent == folder
+                )
+        if contains_current_track:
+            self.reset_current_track()
+            QApplication.processEvents()
+        if self.current_playlist == name:
+            self.cancel_playlist_loading()
+        release = getattr(self._network_manager, "release_local_folder", None)
+        if release is not None:
+            release(folder)
+            QApplication.processEvents()
+        self.forget_playlist(name)
+        if self.current_playlist == name:
+            self.current_playlist = None
+            self.current_playlist_path = None
+            self._playlist_order = []
+            self._row_by_filename = {}
+            self.playlist_name.setText("Playlist")
+            self.songs_list.clear()
+            self._order_undo_stack.clear()
+        QApplication.processEvents()
 
     def _activate_playback_context(self, path, filename, index, preserve_queue):
         path = Path(path)

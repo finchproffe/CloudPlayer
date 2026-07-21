@@ -340,6 +340,55 @@ class NetworkTransferMixin(NetworkConnectionMixin, NetworkStreamMixin):
         self._stream_targets.clear()
         self._active_upload_id = ""
 
+    @staticmethod
+    def _same_local_path(first, second):
+        try:
+            return Path(first).resolve() == Path(second).resolve()
+        except OSError:
+            return Path(first) == Path(second)
+
+    @staticmethod
+    def _inside_local_folder(path, folder):
+        try:
+            return Path(path).resolve().parent == Path(folder).resolve()
+        except OSError:
+            return Path(path).parent == Path(folder)
+
+    def _release_local_sources(self, matches):
+        released = False
+        for transfer_id, context in list(self._outgoing_transfers.items()):
+            if not matches(context.get("path")):
+                continue
+            released = True
+            context["cancelled"] = True
+            self._outgoing_transfers.pop(transfer_id, None)
+            self._outgoing_metadata.pop(transfer_id, None)
+            self._stream_targets.pop(transfer_id, None)
+            if self.is_connected:
+                self._send_packet({
+                    "type": "upload_abort",
+                    "transfer_id": transfer_id,
+                })
+            if self._active_upload_id == transfer_id:
+                self._active_upload_id = ""
+        if released and self._upload_task and not self._upload_task.done():
+            self._upload_task.cancel()
+        return released
+
+    def release_local_path(self, path):
+        target = Path(path)
+        return self._release_local_sources(
+            lambda source: source is not None
+            and self._same_local_path(source, target)
+        )
+
+    def release_local_folder(self, folder):
+        target = Path(folder)
+        return self._release_local_sources(
+            lambda source: source is not None
+            and self._inside_local_folder(source, target)
+        )
+
     def _resume_requested_upload(self, packet: dict):
         transfer_id = str(packet.get("transfer_id") or "")
         context = self._outgoing_transfers.get(transfer_id)

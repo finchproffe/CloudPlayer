@@ -20,10 +20,10 @@ from PySide6.QtWidgets import (
 from config import DOCS_PATH, DOWNLOADS_PATH, TEMP_PATH, TEXT_MUTED
 from dropdown_ui import QDialog
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.6.2"
 RELEASE_API_URL = "https://api.github.com/repos/finchproffe/CloudPlayer/releases/latest"
 UPDATE_STATE_PATH = DOCS_PATH / "update_state.json"
-UPDATE_DOWNLOAD_PATH = DOWNLOADS_PATH / "CloudPlayer.exe"
+UPDATE_DOWNLOAD_PATH = DOWNLOADS_PATH / "CloudPlayer.update.exe"
 UPDATE_HELPER_PATH = DOWNLOADS_PATH / "CloudPlayerUpdater.exe"
 UPDATE_LOG_PATH = DOCS_PATH / "update.log"
 
@@ -261,7 +261,13 @@ class UpdateDialog(QDialog):
 
 
 class UpdateReadyDialog(QDialog):
-    def __init__(self, release, automatic_install, parent=None):
+    def __init__(
+        self,
+        release,
+        automatic_install,
+        unavailable_reason="",
+        parent=None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("CloudPlayer Update")
         self.setModal(True)
@@ -280,8 +286,10 @@ class UpdateReadyDialog(QDialog):
         else:
             message = (
                 f"CloudPlayer {release['version']} has been verified. "
-                "Automatic replacement is available only in the packaged "
-                "Windows application."
+                + (
+                    unavailable_reason
+                    or "Automatic replacement is not available for this build."
+                )
             )
         text = QLabel(message)
         text.setWordWrap(True)
@@ -302,10 +310,31 @@ class UpdateReadyDialog(QDialog):
 
 
 def current_install_target():
-    if os.name != "nt" or not getattr(sys, "frozen", False):
+    if os.name != "nt":
         return None
-    target = Path(sys.executable).resolve()
-    return target if target.suffix.casefold() == ".exe" else None
+    candidates = [Path(sys.executable)]
+    if sys.argv:
+        candidates.append(Path(sys.argv[0]))
+    downloaded = os.path.normcase(str(UPDATE_DOWNLOAD_PATH.resolve()))
+    for candidate in candidates:
+        try:
+            target = candidate.resolve()
+        except OSError:
+            continue
+        name = target.name.casefold()
+        interpreter = re.fullmatch(
+            r"(?:pythonw?|pypy|pypy3|py)(?:\d+(?:\.\d+)*)?\.exe",
+            name,
+        )
+        if (
+            target.suffix.casefold() != ".exe"
+            or interpreter
+            or not target.is_file()
+            or os.path.normcase(str(target)) == downloaded
+        ):
+            continue
+        return target
+    return None
 
 
 def downloaded_update_is_valid(release):
@@ -326,12 +355,25 @@ def downloaded_update_is_valid(release):
     )
 
 
-def automatic_update_supported(release):
+def automatic_update_status(release):
+    if not isinstance(release, dict):
+        return False, "The release metadata is invalid."
+    if not release.get("updater"):
+        return False, (
+            "This GitHub Release does not contain CloudPlayerUpdater.exe."
+        )
+    if not downloaded_update_is_valid(release):
+        return False, (
+            "The downloaded application or updater is missing or failed verification."
+        )
+    if current_install_target() is None:
+        return False, (
+            "The running CloudPlayer executable could not be identified. "
+            "Start CloudPlayer.exe directly instead of main.py."
+        )
     return (
-        isinstance(release, dict)
-        and current_install_target() is not None
-        and bool(release.get("updater"))
-        and downloaded_update_is_valid(release)
+        True,
+        "",
     )
 
 
@@ -342,7 +384,10 @@ def update_health_path(token):
 def launch_update_installer(release):
     target = current_install_target()
     if target is None:
-        return False, "Automatic installation requires the packaged Windows app."
+        return False, (
+            "CloudPlayer could not identify its running executable. "
+            "Start the installed CloudPlayer.exe directly instead of main.py."
+        )
     updater = release.get("updater") if isinstance(release, dict) else None
     if not updater:
         return False, "CloudPlayerUpdater.exe is missing from this release."

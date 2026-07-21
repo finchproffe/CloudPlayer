@@ -23,6 +23,16 @@ def setup_hidpi_scaling():
 
         os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
         os.environ["QT_SCALE_FACTOR_ROUNDING_POLICY"] = "PassThrough"
+        quiet_rules = (
+            "qt.multimedia.ffmpeg.info=false\n"
+            "qt.gui.icc.warning=false"
+        )
+        existing_rules = os.environ.get("QT_LOGGING_RULES", "").strip()
+        os.environ["QT_LOGGING_RULES"] = (
+            f"{existing_rules}\n{quiet_rules}"
+            if existing_rules
+            else quiet_rules
+        )
         _HIDPI_READY = True
 
 

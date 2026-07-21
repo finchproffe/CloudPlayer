@@ -4,6 +4,7 @@ from PySide6.QtCore import QElapsedTimer, QEvent, QEventLoop, QRect, QSize, QTim
 from PySide6.QtWidgets import (
     QApplication,
     QColorDialog as QtColorDialog,
+    QComboBox,
     QDialog as QtDialog,
     QFileDialog as QtFileDialog,
     QGraphicsOpacityEffect,
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from config import ACCENT_COLOR, BG_COLOR, BUTTON_BORDER, PANEL_BG, TEXT_COLOR
+from smooth_scroll import enable_smooth_scrolling
 from utils import colored_icon
 
 
@@ -118,9 +120,13 @@ class _DropdownMixin:
             header.setAttribute(Qt.WA_StyledBackground, True)
             header.setFixedHeight(56)
             header.setStyleSheet(
-                f"#cloudDropdownHeader{{background:{PANEL_BG};"
-                f"border-bottom:1px solid {BUTTON_BORDER};"
-                "border-top-left-radius:10px;border-top-right-radius:10px}}"
+                f"QWidget#cloudDropdownHeader {{"
+                f"background-color: {PANEL_BG};"
+                f"border: 0px;"
+                f"border-bottom: 1px solid {BUTTON_BORDER};"
+                f"border-top-left-radius: 10px;"
+                f"border-top-right-radius: 10px;"
+                f"}}"
             )
             title = QLabel(header)
             title.setAttribute(Qt.WA_TransparentForMouseEvents, True)
@@ -153,15 +159,18 @@ class _DropdownMixin:
             or getattr(self, "_dropdown_cancel_allowed", True)
         )
         self._reserve_header_space()
+        self.setObjectName("cloudDropdownPanel")
         current_style = self.styleSheet()
-        marker = "#cloudDropdownPanel"
+        marker = "QDialog#cloudDropdownPanel"
         if marker not in current_style:
             self.setStyleSheet(
                 current_style
-                + f"#cloudDropdownPanel{{background:{BG_COLOR};border:1px solid {BUTTON_BORDER};"
-                "border-radius:10px}}"
+                + f"QDialog#cloudDropdownPanel {{"
+                f"background-color: {BG_COLOR};"
+                f"border: 1px solid {BUTTON_BORDER};"
+                f"border-radius: 10px;"
+                f"}}"
             )
-        self.setObjectName("cloudDropdownPanel")
         self._dropdown_backdrop.setGeometry(host.rect())
         self._layout_dropdown(False)
         return True
@@ -402,6 +411,15 @@ class DropdownInputDialog(_DropdownMixin, QtInputDialog):
         dialog.setInputMethodHints(inputMethodHints)
         if values:
             dialog.setTextValue(str(values[max(0, min(current, len(values) - 1))]))
+        combo = dialog.findChild(QComboBox)
+        if combo is not None:
+            enable_smooth_scrolling(
+                combo.view(),
+                duration=360,
+                wheel_step=80,
+                acceleration=0.14,
+                max_boost=2.0,
+            )
         accepted = dialog.exec() == cls.Accepted
         return dialog.textValue(), accepted
 
@@ -420,7 +438,7 @@ class DropdownInputDialog(_DropdownMixin, QtInputDialog):
         dialog = cls(parent)
         dialog.setWindowTitle(title)
         dialog.setLabelText(label)
-        dialog.setInputMode(cls.IntInput)
+        dialog.setInputMode(QtInputDialog.InputMode.IntInput)
         dialog.setIntRange(minValue, maxValue)
         dialog.setIntStep(step)
         dialog.setIntValue(value)
@@ -431,13 +449,18 @@ class DropdownInputDialog(_DropdownMixin, QtInputDialog):
 class DropdownFileDialog(_DropdownMixin, QtFileDialog):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.setOption(self.DontUseNativeDialog, True)
+        self.setOption(
+            QtFileDialog.Option.DontUseNativeDialog, True
+        )
 
     @classmethod
     def _create(cls, parent, caption, directory, filter_text, options):
         dialog = cls(parent, caption, directory, filter_text)
         if options is not None:
-            dialog.setOptions(options | cls.DontUseNativeDialog)
+            dialog.setOptions(options)
+            dialog.setOption(
+                QtFileDialog.Option.DontUseNativeDialog, True
+            )
         return dialog
 
     @classmethod
@@ -445,8 +468,8 @@ class DropdownFileDialog(_DropdownMixin, QtFileDialog):
         cls, parent=None, caption="", directory="", filter="", selectedFilter="", options=None
     ):
         dialog = cls._create(parent, caption, directory, filter, options)
-        dialog.setFileMode(cls.ExistingFile)
-        dialog.setAcceptMode(cls.AcceptOpen)
+        dialog.setFileMode(QtFileDialog.FileMode.ExistingFile)
+        dialog.setAcceptMode(QtFileDialog.AcceptMode.AcceptOpen)
         if selectedFilter:
             dialog.selectNameFilter(selectedFilter)
         accepted = dialog.exec() == cls.Accepted
@@ -458,8 +481,8 @@ class DropdownFileDialog(_DropdownMixin, QtFileDialog):
         cls, parent=None, caption="", directory="", filter="", selectedFilter="", options=None
     ):
         dialog = cls._create(parent, caption, directory, filter, options)
-        dialog.setFileMode(cls.ExistingFiles)
-        dialog.setAcceptMode(cls.AcceptOpen)
+        dialog.setFileMode(QtFileDialog.FileMode.ExistingFiles)
+        dialog.setAcceptMode(QtFileDialog.AcceptMode.AcceptOpen)
         if selectedFilter:
             dialog.selectNameFilter(selectedFilter)
         accepted = dialog.exec() == cls.Accepted
@@ -470,8 +493,8 @@ class DropdownFileDialog(_DropdownMixin, QtFileDialog):
         cls, parent=None, caption="", directory="", filter="", selectedFilter="", options=None
     ):
         dialog = cls._create(parent, caption, directory, filter, options)
-        dialog.setFileMode(cls.AnyFile)
-        dialog.setAcceptMode(cls.AcceptSave)
+        dialog.setFileMode(QtFileDialog.FileMode.AnyFile)
+        dialog.setAcceptMode(QtFileDialog.AcceptMode.AcceptSave)
         if selectedFilter:
             dialog.selectNameFilter(selectedFilter)
         accepted = dialog.exec() == cls.Accepted
@@ -483,9 +506,9 @@ class DropdownFileDialog(_DropdownMixin, QtFileDialog):
         cls, parent=None, caption="", directory="", options=None
     ):
         dialog = cls._create(parent, caption, directory, "", options)
-        dialog.setFileMode(cls.Directory)
-        dialog.setAcceptMode(cls.AcceptOpen)
-        dialog.setOption(cls.ShowDirsOnly, True)
+        dialog.setFileMode(QtFileDialog.FileMode.Directory)
+        dialog.setAcceptMode(QtFileDialog.AcceptMode.AcceptOpen)
+        dialog.setOption(QtFileDialog.Option.ShowDirsOnly, True)
         accepted = dialog.exec() == cls.Accepted
         files = dialog.selectedFiles()
         return files[0] if accepted and files else ""
@@ -494,7 +517,9 @@ class DropdownFileDialog(_DropdownMixin, QtFileDialog):
 class DropdownColorDialog(_DropdownMixin, QtColorDialog):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.setOption(self.DontUseNativeDialog, True)
+        self.setOption(
+            QtColorDialog.ColorDialogOption.DontUseNativeDialog, True
+        )
 
 
 class DropdownProgressDialog(_DropdownMixin, QtProgressDialog):
@@ -510,6 +535,8 @@ class DropdownProgressDialog(_DropdownMixin, QtProgressDialog):
 QDialog = DropdownDialog
 QMessageBox = DropdownMessageBox
 QInputDialog = DropdownInputDialog
-QFileDialog = DropdownFileDialog
+# File selection deliberately stays native.  On Windows this opens Explorer's
+# standard file picker instead of embedding Qt's picker in our custom overlay.
+QFileDialog = QtFileDialog
 QColorDialog = DropdownColorDialog
 QProgressDialog = DropdownProgressDialog

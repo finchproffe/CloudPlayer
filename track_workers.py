@@ -15,9 +15,12 @@ from lyrics_service import (
 )
 from worker_http import HTTP_POOL_SIZE
 
-def fetch_track_metadata(song_path):
+def fetch_track_metadata(song_path, should_stop=None):
 
     song_path = Path(song_path)
+    should_stop = should_stop or (lambda: False)
+    if should_stop():
+        return None
     title, artist, sidecar = _read_identity(song_path)
     result = {
         "title": title,
@@ -31,6 +34,8 @@ def fetch_track_metadata(song_path):
     }
 
     for suffix in (".jpg", ".jpeg", ".png", ".webp"):
+        if should_stop():
+            return None
         cover = song_path.with_suffix(suffix)
         if cover.exists():
             try:
@@ -40,6 +45,8 @@ def fetch_track_metadata(song_path):
             break
 
     cached = read_cached_lyrics(artist, title)
+    if should_stop():
+        return None
     if cached:
         result["lyrics"] = cached
         return result
@@ -53,6 +60,8 @@ def fetch_track_metadata(song_path):
 
     try:
         song = _find_genius_song(artist, title)
+        if should_stop():
+            return None
         if not song:
             result["lyrics"] = "Lyrics not found on Genius."
             return result
@@ -71,7 +80,7 @@ def fetch_track_metadata(song_path):
             result["cover_url"] = cover_url
             if not result["cover_bytes"]:
                 result["cover_bytes"] = _download_bytes(cover_url)
-                if result["cover_bytes"]:
+                if result["cover_bytes"] and not should_stop():
                     try:
                         song_path.with_suffix(".jpg").write_bytes(
                             result["cover_bytes"]
@@ -90,6 +99,9 @@ def fetch_track_metadata(song_path):
                 _lyrics_from_html(page_html)
                 or "Lyrics not found on the Genius page."
             )
+
+        if should_stop():
+            return None
 
         sidecar.update({
             "title": result["title"],
@@ -118,7 +130,11 @@ class TrackMetaFetcher(QThread):
         self.song_path = Path(song_path)
 
     def run(self):
-        self.meta_ready.emit(fetch_track_metadata(self.song_path))
+        result = fetch_track_metadata(
+            self.song_path, self.isInterruptionRequested
+        )
+        if result is not None and not self.isInterruptionRequested():
+            self.meta_ready.emit(result)
 
 
 def _soundcloud_search(query, limit):

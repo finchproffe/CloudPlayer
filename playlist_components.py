@@ -1,9 +1,11 @@
 
+import math
 
 from PySide6.QtCore import (
     QElapsedTimer,
     QEvent,
     QPoint,
+    QPointF,
     QRectF,
     QSize,
     QTimer,
@@ -418,12 +420,25 @@ class TrackItemDelegate(QStyledItemDelegate):
 
 
 class CoverPreviewDialog(QDialog):
+    MIN_SCALE = 0.1
+    MAX_SCALE = 8.0
+    ZOOM_STEP = 1.15
+    ZOOM_RESPONSE_MS = 72.0
+
     def __init__(self, pixmap, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Cover: Full Size")
         self.resize(720, 720)
         self.original_pixmap = pixmap
         self.scale_factor = 1.0
+        self._zoom_target_scale = self.scale_factor
+        self._zoom_anchor = QPointF(0.5, 0.5)
+        self._zoom_focus = QPointF()
+        self._zoom_clock = QElapsedTimer()
+        self._zoom_timer = QTimer(self)
+        self._zoom_timer.setTimerType(Qt.PreciseTimer)
+        self._zoom_timer.setInterval(0)
+        self._zoom_timer.timeout.connect(self._animate_zoom_frame)
         self.dragging = False
         self.last_pos = QPoint()
         layout = QVBoxLayout(self)
@@ -443,7 +458,7 @@ class CoverPreviewDialog(QDialog):
         layout.addWidget(hint)
         self._render()
 
-    def _render(self):
+    def _render(self, keep_zoom_anchor=False):
         if not self.original_pixmap or self.original_pixmap.isNull():
             return
         scaled = self.original_pixmap.scaled(
@@ -454,14 +469,69 @@ class CoverPreviewDialog(QDialog):
         self.image.setPixmap(scaled)
         self.image.resize(scaled.size())
 
+        if keep_zoom_anchor:
+            horizontal = self.scroll.horizontalScrollBar()
+            vertical = self.scroll.verticalScrollBar()
+            horizontal.setValue(
+                round(
+                    self._zoom_anchor.x() * scaled.width()
+                    - self._zoom_focus.x()
+                )
+            )
+            vertical.setValue(
+                round(
+                    self._zoom_anchor.y() * scaled.height()
+                    - self._zoom_focus.y()
+                )
+            )
+
+    def _set_zoom_anchor(self, position):
+        size = self.image.size()
+        if size.width() <= 0 or size.height() <= 0:
+            return
+        origin = self.image.mapTo(self.scroll.viewport(), QPoint())
+        self._zoom_focus = QPointF(position)
+        self._zoom_anchor = QPointF(
+            max(0.0, min(1.0, (position.x() - origin.x()) / size.width())),
+            max(0.0, min(1.0, (position.y() - origin.y()) / size.height())),
+        )
+
+    def _queue_zoom(self, position, delta):
+        self._set_zoom_anchor(position)
+        steps = float(delta) / 120.0
+        target = self._zoom_target_scale * (self.ZOOM_STEP ** steps)
+        self._zoom_target_scale = max(
+            self.MIN_SCALE, min(self.MAX_SCALE, target)
+        )
+        if not self._zoom_timer.isActive():
+            self._zoom_clock.start()
+            self._zoom_timer.start()
+
+    def _animate_zoom_frame(self):
+        elapsed_ms = self._zoom_clock.nsecsElapsed() / 1_000_000.0
+        self._zoom_clock.restart()
+        if elapsed_ms <= 0.0:
+            return
+
+        blend = 1.0 - math.exp(-elapsed_ms / self.ZOOM_RESPONSE_MS)
+        current_log = math.log(self.scale_factor)
+        target_log = math.log(self._zoom_target_scale)
+        self.scale_factor = math.exp(
+            current_log + (target_log - current_log) * blend
+        )
+
+        if abs(target_log - math.log(self.scale_factor)) < 0.0005:
+            self.scale_factor = self._zoom_target_scale
+            self._zoom_timer.stop()
+        self._render(keep_zoom_anchor=True)
+
     def eventFilter(self, obj, event):
         if obj is self.scroll.viewport():
             if event.type() == QEvent.Wheel:
-                factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
-                self.scale_factor = max(
-                    0.1, min(8, self.scale_factor * factor)
-                )
-                self._render()
+                delta = event.pixelDelta().y() or event.angleDelta().y()
+                if delta:
+                    self._queue_zoom(event.position(), delta)
+                event.accept()
                 return True
             if (
                 event.type() == QEvent.MouseButtonPress

@@ -1,9 +1,10 @@
 import re
 
-from PySide6.QtCore import QEasingCurve, Property, QPropertyAnimation, QRectF, Signal
+from PySide6.QtCore import QEasingCurve, Property, QPropertyAnimation, QRectF, Signal, Qt
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QCheckBox,
+    QColorDialog as QtColorDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -26,7 +27,7 @@ from config import (
     TEXT_MUTED,
     normalize_accent_color,
 )
-from dropdown_ui import QColorDialog, QDialog
+from dropdown_ui import QDialog
 from utils import colored_svg_renderer
 
 
@@ -87,6 +88,45 @@ class AnimatedCheckBox(QCheckBox):
         )
         self._check_renderer.render(painter, target)
         painter.end()
+
+
+class ColorPickerDialog(QDialog):
+    def __init__(self, color, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Choose Accent Color")
+        self.setModal(True)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 20, 20, 18)
+        root.setSpacing(14)
+        self.picker = QtColorDialog(QColor(color), self)
+        self.picker.setWindowFlags(Qt.Widget)
+        self.picker.setOption(
+            QtColorDialog.ColorDialogOption.DontUseNativeDialog, True
+        )
+        self.picker.setOption(
+            QtColorDialog.ColorDialogOption.NoButtons, True
+        )
+        actions = QHBoxLayout()
+        actions.addStretch()
+        cancel = QPushButton("Cancel")
+        apply_button = QPushButton("Apply")
+        cancel.clicked.connect(self.reject)
+        apply_button.clicked.connect(self.accept)
+        actions.addWidget(cancel)
+        actions.addWidget(apply_button)
+        root.addWidget(self.picker, 1)
+        root.addLayout(actions)
+        self.setStyleSheet(
+            f"QDialog{{background:{BG_COLOR};color:{TEXT_COLOR}}}"
+            f"QPushButton{{background:{BUTTON_BG};color:{TEXT_COLOR};"
+            f"border:1px solid {BUTTON_BORDER};border-radius:5px;"
+            "padding:9px 15px;font-size:13px;font-weight:700}"
+            f"QPushButton:hover{{background:{BUTTON_HOVER};"
+            f"border-color:{ACCENT_COLOR}}}"
+        )
+
+    def selected_color(self):
+        return self.picker.currentColor()
 
 
 class SettingsDialog(QDialog):
@@ -215,7 +255,7 @@ class SettingsDialog(QDialog):
             f"QDialog{{background:{BG_COLOR};color:{TEXT_COLOR}}}"
             f"QLabel{{color:{TEXT_COLOR}}}"
             f"QCheckBox{{color:{TEXT_COLOR};spacing:10px;padding:6px 0}}"
-            f"QCheckBox::indicator{{width:20px;height:20px;image:none;"
+            f"QCheckBox::indicator{{width:20px;height:20px;"
             f"background:{PANEL_BG};"
             f"border:1px solid {BUTTON_BORDER};border-radius:5px}}"
             f"QCheckBox::indicator:hover{{border-color:{self.selected_color}}}"
@@ -262,12 +302,9 @@ class SettingsDialog(QDialog):
         self.status.clear()
 
     def _open_picker(self):
-        picker = QColorDialog(QColor(self.selected_color), self)
-        picker.setWindowTitle("Choose Accent Color")
-        picker.setOption(QColorDialog.DontUseNativeDialog, True)
-        picker.setStyleSheet(self.styleSheet())
+        picker = ColorPickerDialog(self.selected_color, self)
         if picker.exec() == QDialog.Accepted:
-            self.selected_color = picker.selectedColor().name().upper()
+            self.selected_color = picker.selected_color().name().upper()
             self._update_preview()
 
     def _apply_hex_input(self):

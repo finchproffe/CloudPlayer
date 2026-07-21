@@ -42,7 +42,7 @@ CloudPlayer is a desktop music player built with Python, PySide6 and Qt Multimed
 - удалить один или несколько треков;
 - посмотреть и скопировать путь к файлу.
 
-Контекстное меню обложки позволяет открыть её в полном размере, сохранить в файл или скопировать в буфер обмена. В полноразмерном просмотре колёсико изменяет масштаб, а перетаскивание перемещает изображение.
+Контекстное меню обложки позволяет открыть её в полном размере, сохранить в файл или скопировать в буфер обмена. В полноразмерном просмотре колёсико плавно изменяет масштаб относительно позиции курсора, а перетаскивание перемещает изображение.
 
 #### Плеер
 
@@ -108,11 +108,11 @@ Thumbnail Toolbar доступен только в Windows. Глобальные
 
 #### Интерфейс
 
-- Все диалоги открываются внутри главного окна по центру экрана приложения.
+- Диалоги приложения открываются внутри главного окна по центру; выбор и сохранение файлов используют системный Проводник.
 - Отдельный верхний header с названием и кнопкой `exit.svg`.
 - Перетаскивание диалогов за верхний header с ограничением границами приложения.
 - Плавные fade-анимации без искусственного ограничения частоты кадров.
-- Одинаковый плавный инерционный скролл во всех списках, текстовых областях и файловых диалогах.
+- Одинаковый плавный инерционный скролл во всех списках и текстовых областях.
 - Стилизованные вертикальные и горизонтальные scrollbar без стандартных стрелок.
 - Настраиваемый основной accent-цвет.
 - Галочка `check.svg` в настройках плавно прорисовывается слева направо и исчезает в обратном направлении.
@@ -157,7 +157,7 @@ python -m PyInstaller --clean --noconfirm CloudPlayerUpdater.spec
 - `CloudPlayer.exe`;
 - `CloudPlayerUpdater.exe`.
 
-Переход с версии, в которой ещё нет этого механизма, на `1.2.0` выполняется один раз вручную. После установки `1.2.0` последующие обновления поддерживают автоматическую замену и перезапуск.
+Переход с версии, в которой ещё нет этого механизма, на первую сборку с updater выполняется один раз вручную. После её установки последующие обновления поддерживают автоматическую замену и перезапуск.
 
 GitHub должен предоставить SHA-256 digest для обоих файлов. После загрузки пользователь получает диалог `Update and Restart`. Updater ждёт закрытия процесса, сохраняет текущий файл как `CloudPlayer.exe.old`, устанавливает новую сборку и запускает её с одноразовым token. После появления главного окна новая версия подтверждает запуск. Если процесс завершится до подтверждения, updater восстановит старый `.exe`. Журнал находится в `Documents/CloudPlayer/update.log`.
 
@@ -200,7 +200,7 @@ Documents/CloudPlayer/
 ├── update_state.json
 ├── update.log
 ├── downloads/
-│   ├── CloudPlayer.exe
+│   ├── CloudPlayer.update.exe
 │   └── CloudPlayerUpdater.exe
 ├── playlists/
 │   ├── Playlist Name.json
@@ -213,7 +213,7 @@ Documents/CloudPlayer/
 - `settings.json` хранит accent-цвет, громкость и состояние Debug Console.
 - `account.json` хранит локальную сессию аккаунта.
 - `playlists` содержит аудиофайлы, обложки, sidecar-метаданные и порядок треков.
-- `downloads` содержит проверенные файлы `CloudPlayer.exe` и `CloudPlayerUpdater.exe`.
+- `downloads` содержит проверенные файлы `CloudPlayer.update.exe` и `CloudPlayerUpdater.exe`; имя asset-файла в GitHub Release остаётся `CloudPlayer.exe`.
 - `update.log` содержит журнал установки и отката обновлений.
 - `temp/lyrics` содержит кеш текстов песен и временные файлы.
 
@@ -283,7 +283,7 @@ The track context menu can:
 - delete one or multiple tracks;
 - display and copy the file path.
 
-The cover context menu can open the image at full size, save it to a file or copy it to the clipboard. In the full-size viewer, use the mouse wheel to zoom and drag to pan the image.
+The cover context menu can open the image at full size, save it to a file or copy it to the clipboard. In the full-size viewer, the mouse wheel smoothly zooms toward the cursor and dragging pans the image.
 
 #### Player
 
@@ -349,11 +349,11 @@ Thumbnail Toolbar is available only on Windows. Global media keys use the native
 
 #### Interface
 
-- Every dialog opens as a centered overlay inside the main window.
+- Application dialogs open as centered overlays; selecting and saving files uses the native system file picker.
 - Dedicated top header with the dialog title and `exit.svg` button.
 - Drag dialogs by their header while keeping them inside the application.
 - Smooth fade animations without an artificial frame-rate limit.
-- The same inertial scrolling behavior in lists, text areas and file dialogs.
+- The same inertial scrolling behavior in lists and text areas.
 - Styled vertical and horizontal scrollbars without native arrow buttons.
 - Configurable primary accent color.
 - The settings `check.svg` mark draws smoothly from left to right and disappears in reverse.
@@ -398,7 +398,7 @@ Upload two assets with these exact names to every GitHub Release:
 - `CloudPlayer.exe`;
 - `CloudPlayerUpdater.exe`.
 
-Moving from a version that does not include this mechanism to `1.2.0` is a one-time manual update. After `1.2.0` is installed, later releases support automatic replacement and restart.
+Moving from a version that does not include this mechanism to the first updater-enabled build is a one-time manual update. After it is installed, later releases support automatic replacement and restart.
 
 GitHub must provide a SHA-256 digest for both files. After downloading, the user receives an `Update and Restart` dialog. The updater waits for the running process to exit, saves it as `CloudPlayer.exe.old`, installs the new build and starts it with a one-time token. The new version confirms startup after its main window appears. If it exits before confirmation, the updater restores the previous executable. Logs are written to `Documents/CloudPlayer/update.log`.
 
@@ -441,7 +441,7 @@ Documents/CloudPlayer/
 ├── update_state.json
 ├── update.log
 ├── downloads/
-│   ├── CloudPlayer.exe
+│   ├── CloudPlayer.update.exe
 │   └── CloudPlayerUpdater.exe
 ├── playlists/
 │   ├── Playlist Name.json
@@ -454,7 +454,7 @@ Documents/CloudPlayer/
 - `settings.json` stores the accent color, volume and Debug Console state.
 - `account.json` stores the local account session.
 - `playlists` contains audio files, covers, sidecar metadata and track order.
-- `downloads` contains the verified `CloudPlayer.exe` and `CloudPlayerUpdater.exe` files.
+- `downloads` contains the verified `CloudPlayer.update.exe` and `CloudPlayerUpdater.exe` files; the GitHub Release asset remains named `CloudPlayer.exe`.
 - `update.log` contains update installation and rollback events.
 - `temp/lyrics` contains cached lyrics and temporary files.
 

@@ -1,4 +1,5 @@
 import json
+import random
 from collections import OrderedDict
 from pathlib import Path
 
@@ -6,7 +7,7 @@ from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QImageReader, QPainter, QPixmap
 from PySide6.QtWidgets import QListWidgetItem
 
-from config import PLAYLISTS_PATH
+from config import AUDIO_EXTENSIONS, PLAYLISTS_PATH
 from playlist_components import TrackItemDelegate
 from playlist_index import (
     PlaylistSnapshotLoader,
@@ -216,6 +217,85 @@ class PlaylistStorageMixin:
             self.songs_list.clear()
             return
         self._start_playlist_load(selected_name, reset=False)
+
+    def register_added_tracks(self, playlist_name, paths):
+        playlist_name = str(playlist_name or "")
+        filenames = []
+        seen = set()
+        for value in paths or []:
+            path = Path(value)
+            if (
+                path.suffix.lower() not in AUDIO_EXTENSIONS
+                or not path.is_file()
+                or path.name in seen
+            ):
+                continue
+            seen.add(path.name)
+            filenames.append(path.name)
+        if not filenames:
+            if self.current_playlist == playlist_name:
+                self.refresh()
+            return []
+
+        playback_additions = (
+            [
+                filename
+                for filename in filenames
+                if filename not in self._playback_row_by_filename
+            ]
+            if self.playing_playlist == playlist_name
+            else []
+        )
+
+        if self.current_playlist == playlist_name:
+            additions = [
+                filename
+                for filename in filenames
+                if filename not in self._row_by_filename
+            ]
+            if additions:
+                fully_loaded = self._list_fully_loaded
+                self._write_song_order(self._playlist_order + additions)
+                for filename in additions:
+                    self._invalidate_track_cache(filename)
+                if fully_loaded:
+                    for filename in additions:
+                        self.songs_list.addItem(self._new_song_item(filename))
+                else:
+                    self._begin_population(self._playlist_order)
+            for filename in filenames:
+                self._invalidate_track_cache(filename)
+            self.songs_list.viewport().update()
+
+        if self.playing_playlist == playlist_name and playback_additions:
+            missing = [
+                filename
+                for filename in playback_additions
+                if filename not in self._playback_row_by_filename
+            ]
+            if missing:
+                self._playback_order.extend(missing)
+                self._playback_row_by_filename = {
+                    filename: row
+                    for row, filename in enumerate(self._playback_order)
+                }
+                self.current_track_index = self._playback_row_by_filename.get(
+                    self.current_track_filename, self.current_track_index
+                )
+            if self.is_shuffled:
+                random_additions = list(playback_additions)
+                random.shuffle(random_additions)
+                self._shuffle_upcoming = random_additions + [
+                    filename
+                    for filename in self._shuffle_upcoming
+                    if filename not in playback_additions
+                ]
+            self._queue_order_changed()
+
+        updated = getattr(self, "playlist_updated", None)
+        if updated is not None:
+            updated.emit(playlist_name)
+        return filenames
 
     update_songs_list = refresh
 
