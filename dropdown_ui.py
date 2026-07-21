@@ -300,6 +300,13 @@ class _DropdownMixin:
             pass
         return self.result()
 
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self._dismiss_dropdown()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def eventFilter(self, watched, event):
         if watched is self._dropdown_host and event.type() == QEvent.Resize:
             self._dropdown_frame_timer.stop()
@@ -337,11 +344,48 @@ class DropdownDialog(_DropdownMixin, QtDialog):
 
 
 class DropdownMessageBox(_DropdownMixin, QtMessageBox):
+    @staticmethod
+    def _plain_activation(event):
+        return not bool(
+            event.modifiers()
+            & (Qt.ControlModifier | Qt.AltModifier | Qt.ShiftModifier | Qt.MetaModifier)
+        )
+
+    def _click_first_available(self, standards):
+        for standard in standards:
+            button = self.button(standard)
+            if button is not None and button.isVisible() and button.isEnabled():
+                button.click()
+                return True
+        return False
+
+    def keyPressEvent(self, event):
+        # Confirmation dialogs use one predictable keyboard contract:
+        # Enter confirms (Yes/OK), Escape declines (No/Cancel).
+        if self._plain_activation(event) and event.key() in (
+            Qt.Key_Return,
+            Qt.Key_Enter,
+        ):
+            if self._click_first_available((self.Yes, self.Ok)):
+                event.accept()
+                return
+        if event.key() == Qt.Key_Escape:
+            if self._click_first_available(
+                (self.No, self.Cancel, self.Close, self.Abort)
+            ):
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
     @classmethod
     def _display(cls, icon, parent, title, text, buttons, default_button):
         box = cls(icon, title, text, buttons, parent)
         if default_button != cls.NoButton:
             box.setDefaultButton(default_button)
+        elif buttons & cls.Yes:
+            box.setDefaultButton(cls.Yes)
+        elif buttons & cls.Ok:
+            box.setDefaultButton(cls.Ok)
         return cls.StandardButton(box.exec())
 
     @classmethod

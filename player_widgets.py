@@ -430,9 +430,9 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
         actions = QHBoxLayout()
         self.shuffle_btn = QPushButton(" Shuffle Mode")
         self.shuffle_btn.setIcon(colored_icon("shuffle.svg"))
-        add_song = QPushButton("Add Song")
+        self.add_song_btn = QPushButton("Add Song")
         actions.addWidget(self.shuffle_btn)
-        actions.addWidget(add_song)
+        actions.addWidget(self.add_song_btn)
         root.addLayout(actions)
 
         self.player = QMediaPlayer(self)
@@ -457,7 +457,7 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
         self.repeat_btn.clicked.connect(self.toggle_repeat)
         self.queue_btn.clicked.connect(self.show_queue)
         self.shuffle_btn.clicked.connect(self.toggle_shuffle)
-        add_song.clicked.connect(self.add_song)
+        self.add_song_btn.clicked.connect(self.add_song)
         self.volume_slider.valueChanged.connect(self._set_volume)
         self.volume_slider.sliderReleased.connect(self.persist_volume)
         self.volume_percent.clicked.connect(self._set_custom_volume)
@@ -477,6 +477,30 @@ class PlaylistView(PlaylistStorageMixin, PlaylistActionsMixin, QWidget):
         self.undo_shortcut = QShortcut(QKeySequence.Undo, self)
         self.undo_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
         self.undo_shortcut.activated.connect(self.undo_song_reorder)
+
+        keyboard_order = (
+            self.back_btn,
+            self.songs_list,
+            self.cover_label,
+            self.track_title,
+            self.track_artist_prod,
+            self.lyrics_display,
+            self.position,
+            self.queue_btn,
+            self.prev_btn,
+            self.play_btn,
+            self.next_btn,
+            self.repeat_btn,
+            self.shuffle_btn,
+            self.add_song_btn,
+            self.volume_btn,
+            self.volume_slider,
+            self.volume_percent,
+        )
+        for current, following in zip(
+            keyboard_order, keyboard_order[1:]
+        ):
+            QWidget.setTabOrder(current, following)
 
     def _set_volume(self, value):
         self._volume_fade.stop()

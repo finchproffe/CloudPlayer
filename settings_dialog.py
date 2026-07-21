@@ -4,14 +4,18 @@ from PySide6.QtCore import QEasingCurve, Property, QPropertyAnimation, QRectF, S
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QCheckBox,
+    QFrame,
     QColorDialog as QtColorDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QStyle,
     QStyleOptionButton,
     QVBoxLayout,
+    QWidget,
 )
 
 from config import (
@@ -28,6 +32,7 @@ from config import (
     normalize_accent_color,
 )
 from dropdown_ui import QDialog
+from hotkeys import BINDS_PATH
 from utils import colored_svg_renderer
 
 
@@ -145,13 +150,38 @@ class SettingsDialog(QDialog):
             normalize_accent_color(accent_color) or DEFAULT_ACCENT_COLOR
         )
         self.debug_enabled = bool(debug_enabled)
+        self.reset_keyboard_bindings = False
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(460)
+        self.setMinimumSize(460, 500)
+        self.resize(520, 680)
         self.setModal(True)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(26, 24, 26, 24)
-        root.setSpacing(13)
+        root.setSpacing(12)
+
+        self.settings_scroll = QScrollArea(self)
+        self.settings_scroll.setWidgetResizable(True)
+        self.settings_scroll.setFrameShape(QFrame.NoFrame)
+        self.settings_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarAlwaysOff
+        )
+        self.settings_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarAsNeeded
+        )
+        self.settings_scroll.setSizePolicy(
+            QSizePolicy.Expanding,
+            QSizePolicy.Expanding,
+        )
+        self.settings_scroll.viewport().setAutoFillBackground(False)
+
+        content = QWidget(self.settings_scroll)
+        content.setObjectName("settingsContent")
+        content.setAttribute(Qt.WA_StyledBackground, True)
+        content_root = QVBoxLayout(content)
+        content_root.setContentsMargins(0, 0, 8, 0)
+        content_root.setSpacing(13)
+        self.settings_scroll.setWidget(content)
 
         title = QLabel("Appearance")
         title.setStyleSheet(
@@ -201,6 +231,52 @@ class SettingsDialog(QDialog):
         )
         self.debug_checkbox.toggled.connect(self._set_debug_enabled)
 
+        keyboard_title = QLabel("Keyboard")
+        keyboard_title.setStyleSheet(
+            "font-size:18px;font-weight:700;background:transparent"
+        )
+        keyboard_description = QLabel(
+            "Edit keyboard shortcuts in binds.cfg or restore the defaults."
+        )
+        keyboard_description.setWordWrap(True)
+        keyboard_description.setStyleSheet(
+            f"color:{TEXT_MUTED};font-size:12px;background:transparent"
+        )
+
+        self.keyboard_path = QLineEdit(str(BINDS_PATH))
+        self.keyboard_path.setReadOnly(True)
+        self.keyboard_path.setToolTip(str(BINDS_PATH))
+        self.keyboard_path.setCursorPosition(0)
+        self.keyboard_path.setMinimumHeight(40)
+        self.keyboard_path.setSizePolicy(
+            QSizePolicy.Expanding,
+            QSizePolicy.Fixed,
+        )
+
+        self.reset_keyboard_button = QPushButton("Reset Bindings")
+        self.reset_keyboard_button.setMinimumHeight(40)
+        self.reset_keyboard_button.setMinimumWidth(150)
+        self.reset_keyboard_button.setSizePolicy(
+            QSizePolicy.Fixed,
+            QSizePolicy.Fixed,
+        )
+        self.reset_keyboard_button.clicked.connect(
+            self._request_keyboard_reset
+        )
+
+        keyboard_row = QHBoxLayout()
+        keyboard_row.setContentsMargins(0, 0, 0, 0)
+        keyboard_row.setSpacing(10)
+        keyboard_row.addWidget(self.keyboard_path, 1)
+        keyboard_row.addWidget(self.reset_keyboard_button)
+
+        self.keyboard_status = QLabel("")
+        self.keyboard_status.setWordWrap(True)
+        self.keyboard_status.setVisible(False)
+        self.keyboard_status.setStyleSheet(
+            f"color:{TEXT_MUTED};font-size:11px;background:transparent"
+        )
+
         account_title = QLabel("Account")
         account_title.setStyleSheet(
             "font-size:18px;font-weight:700;background:transparent"
@@ -233,26 +309,36 @@ class SettingsDialog(QDialog):
         actions.addWidget(cancel)
         actions.addWidget(save)
 
-        root.addWidget(title)
-        root.addWidget(description)
-        root.addSpacing(4)
-        root.addWidget(self.picker_button)
-        root.addWidget(hex_label)
-        root.addWidget(self.hex_input)
-        root.addWidget(self.status)
-        root.addSpacing(10)
-        root.addWidget(developer_title)
-        root.addWidget(developer_description)
-        root.addWidget(self.debug_checkbox)
-        root.addSpacing(10)
-        root.addWidget(account_title)
-        root.addWidget(account_description)
-        root.addWidget(self.delete_account_button)
-        root.addSpacing(4)
+        content_root.addWidget(title)
+        content_root.addWidget(description)
+        content_root.addSpacing(4)
+        content_root.addWidget(self.picker_button)
+        content_root.addWidget(hex_label)
+        content_root.addWidget(self.hex_input)
+        content_root.addWidget(self.status)
+        content_root.addSpacing(10)
+        content_root.addWidget(developer_title)
+        content_root.addWidget(developer_description)
+        content_root.addWidget(self.debug_checkbox)
+        content_root.addSpacing(10)
+        content_root.addWidget(keyboard_title)
+        content_root.addWidget(keyboard_description)
+        content_root.addLayout(keyboard_row)
+        content_root.addWidget(self.keyboard_status)
+        content_root.addSpacing(10)
+        content_root.addWidget(account_title)
+        content_root.addWidget(account_description)
+        content_root.addWidget(self.delete_account_button)
+        content_root.addStretch(1)
+
+        root.addWidget(self.settings_scroll, 1)
         root.addLayout(actions)
 
         self.setStyleSheet(
             f"QDialog{{background:{BG_COLOR};color:{TEXT_COLOR}}}"
+            "QWidget#settingsContent{background:transparent}"
+            "QScrollArea{background:transparent;border:0}"
+            "QScrollArea>QWidget>QWidget{background:transparent}"
             f"QLabel{{color:{TEXT_COLOR}}}"
             f"QCheckBox{{color:{TEXT_COLOR};spacing:10px;padding:6px 0}}"
             f"QCheckBox::indicator{{width:20px;height:20px;"
@@ -322,6 +408,15 @@ class SettingsDialog(QDialog):
 
     def _set_debug_enabled(self, enabled):
         self.debug_enabled = bool(enabled)
+
+    def _request_keyboard_reset(self):
+        self.reset_keyboard_bindings = True
+        self.reset_keyboard_button.setEnabled(False)
+        self.reset_keyboard_button.setText("Defaults Selected")
+        self.keyboard_status.setText(
+            "Defaults will be restored when you save."
+        )
+        self.keyboard_status.setVisible(True)
 
     def _reset(self):
         self.selected_color = DEFAULT_ACCENT_COLOR

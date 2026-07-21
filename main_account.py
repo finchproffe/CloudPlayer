@@ -43,6 +43,11 @@ class AccountMixin:
         elif not set_debug_console(dialog.debug_enabled):
             config_module.save_debug(False)
             errors.append("The Debug console could not be opened.")
+        if (
+            dialog.reset_keyboard_bindings
+            and not self._reset_keyboard_bindings()
+        ):
+            errors.append("Keyboard bindings could not be reset.")
         if errors:
             QMessageBox.warning(
                 self,

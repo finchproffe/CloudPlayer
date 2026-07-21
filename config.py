@@ -50,6 +50,7 @@ UI_SCALE = 1.0
 DEFAULT_ACCENT_COLOR = "#0D47A1"
 DEFAULT_VOLUME = 70
 DEFAULT_DEBUG = False
+DEFAULT_SEARCH_SOURCES = ("soundcloud",)
 SETTINGS_PATH = DOCS_PATH / "settings.json"
 
 
@@ -77,6 +78,20 @@ def normalize_debug(value):
     return DEFAULT_DEBUG
 
 
+def normalize_search_sources(value):
+    if isinstance(value, str):
+        value = [part.strip() for part in value.split(",")]
+    if not isinstance(value, (list, tuple, set)):
+        return list(DEFAULT_SEARCH_SOURCES)
+    allowed = {"soundcloud", "youtube_music"}
+    normalized = []
+    for item in value:
+        source = str(item or "").strip().casefold()
+        if source in allowed and source not in normalized:
+            normalized.append(source)
+    return normalized or list(DEFAULT_SEARCH_SOURCES)
+
+
 def read_ui_settings():
     try:
         payload = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
@@ -91,6 +106,9 @@ def read_ui_settings():
         "accent_color": color or DEFAULT_ACCENT_COLOR,
         "volume": normalize_volume(payload.get("volume", DEFAULT_VOLUME)),
         "debug": normalize_debug(payload.get("debug", DEFAULT_DEBUG)),
+        "search_sources": normalize_search_sources(
+            payload.get("search_sources", DEFAULT_SEARCH_SOURCES)
+        ),
     }
 
 
@@ -103,6 +121,9 @@ def _write_ui_settings(settings):
         ),
         "volume": normalize_volume(settings.get("volume", DEFAULT_VOLUME)),
         "debug": normalize_debug(settings.get("debug", DEFAULT_DEBUG)),
+        "search_sources": normalize_search_sources(
+            settings.get("search_sources", DEFAULT_SEARCH_SOURCES)
+        ),
     }
     try:
         DOCS_PATH.mkdir(parents=True, exist_ok=True)
@@ -141,6 +162,17 @@ def save_debug(value):
     return True
 
 
+def save_search_sources(value):
+    global SEARCH_SOURCES
+    sources = normalize_search_sources(value)
+    settings = read_ui_settings()
+    settings["search_sources"] = sources
+    if not _write_ui_settings(settings):
+        return False
+    SEARCH_SOURCES = list(sources)
+    return True
+
+
 def save_volume(value):
     global SAVED_VOLUME
     volume = normalize_volume(value)
@@ -156,6 +188,7 @@ _UI_SETTINGS = read_ui_settings()
 ACCENT_COLOR = _UI_SETTINGS["accent_color"]
 SAVED_VOLUME = _UI_SETTINGS["volume"]
 DEBUG_ENABLED = _UI_SETTINGS["debug"]
+SEARCH_SOURCES = list(_UI_SETTINGS["search_sources"])
 
 
 GENIUS_CLIENT_ID = str(

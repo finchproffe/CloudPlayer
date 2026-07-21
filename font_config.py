@@ -23,16 +23,20 @@ def setup_hidpi_scaling():
 
         os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
         os.environ["QT_SCALE_FACTOR_ROUNDING_POLICY"] = "PassThrough"
-        quiet_rules = (
-            "qt.multimedia.ffmpeg.info=false\n"
-            "qt.gui.icc.warning=false"
-        )
-        existing_rules = os.environ.get("QT_LOGGING_RULES", "").strip()
-        os.environ["QT_LOGGING_RULES"] = (
-            f"{existing_rules}\n{quiet_rules}"
-            if existing_rules
-            else quiet_rules
-        )
+        # QT_LOGGING_RULES is an environment-variable rule list. Qt expects
+        # entries separated with semicolons here; embedding CR/LF can make the
+        # whole value malformed on Windows and disables every rule.
+        requested_rules = [
+            "qt.multimedia.ffmpeg.info=false",
+            "qt.gui.icc.warning=false",
+        ]
+        existing = os.environ.get("QT_LOGGING_RULES", "")
+        existing = existing.replace("\r", "").replace("\n", ";")
+        rules = [part.strip() for part in existing.split(";") if part.strip()]
+        for rule in requested_rules:
+            if rule not in rules:
+                rules.append(rule)
+        os.environ["QT_LOGGING_RULES"] = ";".join(rules)
         _HIDPI_READY = True
 
 

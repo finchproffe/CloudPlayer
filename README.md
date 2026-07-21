@@ -2,125 +2,368 @@
 
 [Русский](#русский) · [English](#english)
 
-CloudPlayer is a desktop music player built with Python, PySide6 and Qt Multimedia. It combines local playlists, SoundCloud downloads, lyrics, recommendations, cloud synchronization and synchronized listening rooms in one interface.
+CloudPlayer is a desktop music player for Windows built with Python, PySide6 and Qt Multimedia. It combines local playlists, SoundCloud and YouTube Music search, preview streaming, lyrics, recommendations, cloud synchronization, keyboard-first navigation and synchronized listening rooms in one application.
 
-## Русский
+---
 
-### Возможности
+# Русский
 
-#### Библиотека и плейлисты
+## О программе
+
+CloudPlayer предназначен для локальной музыкальной библиотеки, но не ограничивается файлами на компьютере. Внутри приложения можно:
+
+- создавать и оформлять плейлисты;
+- искать музыку в SoundCloud и YouTube Music;
+- прослушивать Demo до скачивания;
+- скачивать один или несколько выбранных треков;
+- добавлять музыку по ссылке или из локального файла;
+- получать тексты песен;
+- управлять приложением почти полностью с клавиатуры;
+- синхронно слушать музыку вместе с другими пользователями;
+- синхронизировать доступные ссылки на треки через аккаунт;
+- получать обновления через GitHub Releases.
+
+CloudPlayer хранит библиотеку локально в `Documents/CloudPlayer` и не требует аккаунта для обычного воспроизведения, плейлистов и добавления локальных файлов.
+
+## Основные возможности
+
+### Библиотека и плейлисты
 
 - Создание, открытие, переименование и удаление плейлистов.
-- Выбор собственной обложки плейлиста и возврат к автоматически найденной обложке.
+- Собственная обложка плейлиста.
+- Возврат к автоматически найденной обложке.
 - Множественное выделение плейлистов и треков.
-- Изменение порядка треков перетаскиванием.
-- Отмена последнего изменения порядка через `Ctrl+Z`.
-- Автоматическое сохранение порядка и метаданных плейлиста.
-- Продолжение воспроизведения после выхода из плейлиста или перехода в другой плейлист.
-- Остановка воспроизведения при удалении именно играющего трека или его плейлиста.
+- Перестановка треков перетаскиванием.
+- Отмена последней перестановки через `Ctrl+Z`.
+- Автоматическое сохранение порядка и метаданных.
+- Продолжение воспроизведения после выхода из плейлиста.
+- Корректная остановка, если удалён играющий трек или его плейлист.
+- Контекстные действия для одного или нескольких выделенных треков.
 
-#### Добавление и поиск музыки
+### Add Song: SoundCloud и YouTube Music
 
-- Поиск треков SoundCloud из главного меню.
-- Поиск SoundCloud непосредственно в окне `Add Song`.
-- Загрузка одного или нескольких выбранных результатов.
-- Добавление трека по полной ссылке SoundCloud.
-- Добавление локальных аудиофайлов.
-- Фоновая загрузка с отображением прогресса.
-- Использование `yt-dlp` и FFmpeg для получения и преобразования аудио.
-- Рекомендации с возможностью сразу добавить найденный трек в плейлист.
+Окно **Add Song** поддерживает два источника:
 
-Поддерживаемые локальные форматы: `.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`, `.opus` и `.webm`.
+- **SoundCloud**;
+- **YouTube Music**.
 
-#### Управление треками
+По умолчанию включён только SoundCloud. Источники переключаются через кнопку с `filter.svg`.
+
+В выпадающем меню:
+
+- выбранный источник отмечается `check.svg`;
+- можно включить один источник или оба;
+- отключить все источники одновременно нельзя;
+- последний выбор сохраняется в `Documents/CloudPlayer/settings.json`.
+
+YouTube Music ищется не через обычную выдачу YouTube, а в категории песен. CloudPlayer дополнительно:
+
+- убирает точные дубликаты;
+- повышает результаты, лучше совпадающие с запросом;
+- понижает `slowed`, `reverb`, `nightcore`, `karaoke`, `cover`, `remix`, `sped up` и похожие версии, если пользователь не указал это в запросе;
+- помечает источник результата как `SC` или `YTM`;
+- объединяет результаты двух источников в один список.
+
+### Demo перед скачиванием
+
+У каждого результата справа находится белая подпись **Demo** и кнопка `play.svg` / `pause.svg`.
+
+Demo:
+
+- не добавляет трек в библиотеку;
+- запускается до скачивания;
+- использует небольшую стартовую буферизацию;
+- продолжает загружать аудио по чанкам во время воспроизведения;
+- поддерживает потоковые и HLS-источники;
+- останавливает предыдущее Demo при выборе другого;
+- прекращает загрузку при закрытии Add Song или запуске нового поиска;
+- автоматически использует текущую громкость основного плеера;
+- повторяет состояние mute основного плеера;
+- сразу реагирует на изменение громкости.
+
+Клавиатурой в списке результатов:
+
+- `↑` / `↓` — выбрать трек;
+- `Space` — включить или поставить Demo на паузу;
+- `Enter` — скачать выбранный результат;
+- `Ctrl+↑` / `Ctrl+↓` — расширить множественное выделение;
+- после множественного выделения `Enter` скачивает выбранные треки.
+
+### Другие способы добавления музыки
+
+- Добавление полной ссылки SoundCloud.
+- Добавление полной ссылки YouTube или YouTube Music.
+- Добавление локального аудиофайла.
+- Фоновая загрузка с прогрессом.
+- Преобразование аудио через `yt-dlp` и FFmpeg.
+- Добавление рекомендаций непосредственно в плейлист.
+
+Поддерживаемые локальные форматы:
+
+```text
+.mp3  .wav  .m4a  .flac  .ogg  .opus  .webm
+```
+
+## Управление треками
 
 Контекстное меню трека позволяет:
 
 - запустить воспроизведение;
 - переименовать трек;
-- создать копию вместе с дополнительными файлами метаданных и обложки;
+- создать копию вместе с метаданными и обложкой;
 - удалить один или несколько треков;
-- посмотреть и скопировать путь к файлу.
+- показать и скопировать путь к файлу.
 
-Контекстное меню обложки позволяет открыть её в полном размере, сохранить в файл или скопировать в буфер обмена. В полноразмерном просмотре колёсико плавно изменяет масштаб относительно позиции курсора, а перетаскивание перемещает изображение.
+Контекстное меню обложки позволяет:
 
-#### Плеер
+- открыть изображение в полном размере;
+- сохранить его в файл;
+- скопировать изображение;
+- плавно масштабировать колёсиком;
+- перемещать увеличенное изображение перетаскиванием.
 
-- Play/Pause, предыдущий и следующий трек.
+## Плеер
+
+- Play/Pause.
+- Предыдущий и следующий трек.
 - Перемотка нажатием или перетаскиванием по timeline.
-- Отображение текущего времени, длительности и прогресса сетевого буфера.
-- Регулировка громкости ползунком или точным числом.
-- Быстрое включение и выключение звука с плавным затуханием, восстановлением громкости и анимацией черты.
-- Сохранение выбранной громкости между запусками.
-- Repeat с плавной анимацией черты состояния.
-- Shuffle с устойчивой очередью случайных треков.
-- Автоматический переход к следующему треку после завершения текущего.
-- Отображение названия, исполнителя, обложки и текста песни.
+- Текущее время, длительность и прогресс сетевого буфера.
+- Громкость ползунком или точным числом.
+- Плавное включение и выключение звука.
+- Сохранение громкости между запусками.
+- Repeat.
+- Shuffle с устойчивой случайной очередью.
+- Автоматический переход к следующему треку.
+- Название, исполнитель, обложка и текст песни.
 - Получение и локальное кеширование текстов через Genius.
 
-#### Очередь
+## Очередь
 
 - Кнопка очереди расположена первой в блоке управления.
 - Показываются следующие пять треков.
 - Поддерживаются обычный порядок, Shuffle Mode и очередь Listen Together.
-- В обычном и shuffle-режиме треки можно переставлять перетаскиванием.
-- Изменение очереди не переписывает сохранённый порядок самого плейлиста.
+- Треки можно переставлять перетаскиванием.
+- Изменение очереди не переписывает сохранённый порядок плейлиста.
 
-#### Listen Together
+## Listen Together
 
-- Создание собственной комнаты или подключение по адресу и порту.
+- Создание комнаты.
+- Подключение по адресу и порту.
 - Поддержка доменов, IPv4, IPv6 и полного URL.
-- Отдельный внешний и локальный порт для сервера.
-- Синхронизация play, pause, seek, repeat, выбора и пропуска треков.
+- Отдельный внешний и локальный порт.
+- Синхронизация:
+  - play;
+  - pause;
+  - seek;
+  - repeat;
+  - выбора трека;
+  - перехода к следующему треку.
 - Передача отсутствующих треков между участниками.
-- Адаптивный сетевой буфер и отображение загруженной части на timeline.
+- Адаптивный сетевой буфер.
 - Возобновление прерванной передачи после переподключения.
-- Список участников комнаты, страна и задержка.
-- Опциональная конфигурация TURN-серверов.
+- Список участников, страна и задержка.
+- Опциональная TURN-конфигурация.
 
-Для подключения извне локальной сети может потребоваться проброс выбранного порта на роутере.
+Для подключения извне локальной сети может понадобиться проброс выбранного порта на роутере и разрешение в firewall.
 
-#### Аккаунт и облачная синхронизация
+## Аккаунт и облачная синхронизация
 
-- Регистрация и вход в аккаунт.
-- Проверка Cloudflare Turnstile.
+- Регистрация и вход.
+- Cloudflare Turnstile.
 - Сохранение локальной сессии.
-- Синхронизация ссылок на загружаемые треки через Supabase.
+- Синхронизация исходных ссылок на доступные для загрузки треки через Supabase.
 - Загрузка синхронизированных треков в локальный плейлист.
-- Удаление отдельных треков из облачной синхронизации.
-- Выход и полное удаление аккаунта.
+- Удаление отдельных записей из облачной синхронизации.
+- Выход из аккаунта.
+- Полное удаление аккаунта.
 
-Локальные файлы без исходной ссылки не загружаются в облако и пропускаются при синхронизации.
+Локальные файлы без исходной ссылки не загружаются в облако и пропускаются во время синхронизации.
 
-#### Системное управление и интеграции
+## Полное управление с клавиатуры
 
-- Глобальные клавиши `F7`, `F8`, `F9`: предыдущий трек, play/pause, следующий трек.
-- Поддержка аппаратных клавиш Previous, Play/Pause и Next.
-- Windows Thumbnail Toolbar под превью приложения на панели задач.
-- Кнопки Previous, Play/Pause и Next в Thumbnail Toolbar.
-- Discord Rich Presence с текущим треком, исполнителем, обложкой и состоянием паузы.
-- Проверка обновлений через GitHub Releases.
-- Проверка размера и SHA-256 перед сохранением обновления.
-- Установка через отдельный updater после полного завершения CloudPlayer.
-- Автоматический перезапуск, подтверждение успешного запуска и откат при раннем падении новой версии.
+CloudPlayer поддерживает клавиатурную навигацию почти по всему интерфейсу.
 
-Thumbnail Toolbar доступен только в Windows. Глобальные media keys в Windows сначала используют нативный Win32 backend, затем библиотеку `keyboard` как резервный вариант.
+Индикатор фокуса:
 
-#### Интерфейс
+- скрыт при обычной работе мышью;
+- появляется после начала клавиатурной навигации;
+- исчезает после клика, двойного клика, прокрутки или касания.
 
-- Диалоги приложения открываются внутри главного окна по центру; выбор и сохранение файлов используют системный Проводник.
-- Отдельный верхний header с названием и кнопкой `exit.svg`.
-- Перетаскивание диалогов за верхний header с ограничением границами приложения.
-- Плавные fade-анимации без искусственного ограничения частоты кадров.
-- Одинаковый плавный инерционный скролл во всех списках и текстовых областях.
-- Стилизованные вертикальные и горизонтальные scrollbar без стандартных стрелок.
-- Настраиваемый основной accent-цвет.
-- Галочка `check.svg` в настройках плавно прорисовывается слева направо и исчезает в обратном направлении.
-- Опциональная Debug Console с stdout, stderr, предупреждениями, Python/Qt-логами и необработанными исключениями.
-- Ссылки GitHub и Telegram показываются во внутреннем меню и могут быть скопированы.
-- Кнопка поддержки показывает адрес пожертвования и позволяет скопировать его.
+Обычная работа `Tab` не заменяется нестандартной системой. Приложение использует нативный порядок фокуса Qt.
 
-### Быстрый запуск
+### Навигация
+
+| Действие | Клавиша |
+| --- | --- |
+| Следующий элемент или блок | `Tab` |
+| Предыдущий элемент или блок | `Shift+Tab` |
+| Перемещение внутри списка или меню | `↑` `↓` `←` `→` |
+| Выполнить выбранное действие | `Enter` |
+| Закрыть меню, диалог или отменить действие | `Esc` |
+| Вернуться на предыдущий экран | `Backspace` |
+| Первый элемент списка | `Home` |
+| Последний элемент списка | `End` |
+| Быстрая прокрутка вверх | `PageUp` |
+| Быстрая прокрутка вниз | `PageDown` |
+
+### Подтверждения
+
+Во всех диалогах подтверждения:
+
+| Действие | Клавиша |
+| --- | --- |
+| `Yes` / `OK` / подтверждение | `Enter` |
+| `No` / `Cancel` / отказ | `Esc` |
+
+Это работает независимо от того, какая кнопка получила визуальный фокус.
+
+### Контекстное меню
+
+| Действие | Клавиша |
+| --- | --- |
+| Открыть контекстное меню выбранного элемента | одиночный `Right Ctrl` |
+| Резервное сочетание контекстного меню | `Shift+F10` |
+| Перемещение по пунктам | `↑` / `↓` |
+| Выполнить пункт | `Enter` |
+| Закрыть меню | `Esc` |
+
+Контекстное меню поддерживается для трека, плейлиста, текста, обложки и других элементов, для которых предусмотрены действия.
+
+Одиночное нажатие `Fn` обычно не передаётся Windows-приложению, поэтому основная клавиша контекстного меню — правый `Ctrl`.
+
+### Плейлисты и библиотека
+
+| Действие | Клавиша |
+| --- | --- |
+| Открыть Add Song в текущем плейлисте | `Alt` |
+| Автоматически перейти в поле поиска Add Song | после `Alt` |
+| Новый плейлист | `Ctrl+N` |
+| Перейти в поиск | `Ctrl+F` |
+| Выбрать всё в поддерживаемом списке | `Ctrl+A` |
+| Удалить выбранный трек или плейлист | `Delete` |
+| Отменить последнюю перестановку треков | `Ctrl+Z` |
+| Запустить выбранный трек | `Ctrl+Enter` |
+| Поставить выбранный трек следующим | `Shift+Enter` |
+| Добавить следующий трек к выделению | `Ctrl+↓` |
+| Добавить предыдущий трек к выделению | `Ctrl+↑` |
+
+`Ctrl+↑` и `Ctrl+↓` работают в основном списке треков и в результатах Add Song. Уже выделенные элементы не сбрасываются.
+
+### Управление воспроизведением
+
+| Действие | Клавиша |
+| --- | --- |
+| Переключить Repeat | `F5` |
+| Переключить Shuffle | `F6` |
+| Предыдущий трек | `F7` |
+| Play/Pause | `F8` |
+| Следующий трек | `F9` |
+| Mute/Unmute | `F10` |
+| Уменьшить громкость | `F11` |
+| Увеличить громкость | `F12` |
+| Play/Pause внутри CloudPlayer | `Space` |
+
+`Space` не перехватывается во время ввода текста. В списке результатов Add Song он контекстно управляет Demo.
+
+На ноутбуках и компактных клавиатурах может понадобиться `Fn+F5` … `Fn+F12`. CloudPlayer получает итоговый сигнал `F5` … `F12`; работа `Fn` зависит от клавиатуры и её режима.
+
+### Быстрый переход по разделам
+
+| Раздел | Клавиша |
+| --- | --- |
+| Главная / библиотека | `Ctrl+1` |
+| Плейлисты | `Ctrl+2` |
+| Поиск | `Ctrl+3` |
+| Очередь | `Ctrl+4` |
+| Listen Together | `Ctrl+5` |
+| Настройки | `Ctrl+6` |
+| Текущий трек | `Ctrl+0` |
+
+### Глобальные media keys
+
+В Windows глобально поддерживаются:
+
+- `F7` — предыдущий трек;
+- `F8` — Play/Pause;
+- `F9` — следующий трек;
+- аппаратные клавиши Previous, Play/Pause и Next.
+
+Глобальные клавиши сначала используют нативный Win32 backend, затем библиотеку `keyboard` как резервный вариант.
+
+## Настройка биндов
+
+Все пользовательские сочетания находятся в:
+
+```text
+Documents/CloudPlayer/binds.cfg
+```
+
+Если файла нет, CloudPlayer создаёт его автоматически с настройками по умолчанию.
+
+В настройках приложения доступен раздел **Keyboard**:
+
+- отображается путь к `binds.cfg`;
+- доступна кнопка сброса;
+- сброс записывается после нажатия **Save**;
+- **Cancel** не изменяет файл;
+- новые значения применяются без перезапуска.
+
+Пример структуры `binds.cfg`:
+
+```ini
+focus_next = Tab
+focus_previous = Shift+Tab
+navigate_up = Up
+navigate_down = Down
+navigate_left = Left
+navigate_right = Right
+activate = Enter
+cancel = Escape
+
+context_menu = RightCtrl
+context_menu_fallback = Shift+F10
+
+repeat = F5
+shuffle = F6
+previous_track = F7
+play_pause = F8
+next_track = F9
+mute = F10
+volume_down = F11
+volume_up = F12
+
+playlist_add_song = Alt
+demo_selected = Space
+multi_select_up = Ctrl+Up
+multi_select_down = Ctrl+Down
+```
+
+Названия параметров в установленной версии могут включать дополнительные действия. Для получения полного актуального шаблона удалите `binds.cfg` или используйте **Reset Bindings** в настройках.
+
+## Интерфейс
+
+- Диалоги открываются внутри главного окна по центру.
+- Выбор и сохранение файлов используют системный Проводник.
+- У диалогов есть отдельный header и кнопка `exit.svg`.
+- Диалоги можно перемещать за верхнюю панель.
+- Плавные fade-анимации.
+- Инерционный скролл.
+- Стилизованные scrollbar.
+- Настраиваемый accent-цвет.
+- Анимированная `check.svg`.
+- Debug Console:
+  - stdout;
+  - stderr;
+  - Python logging;
+  - warnings;
+  - Qt logs;
+  - необработанные исключения.
+- Ссылки GitHub и Telegram.
+- Кнопка поддержки с копированием адреса пожертвования.
+
+Строки FFmpeg вида `Input #0`, `hls`, `data000.m4s` во время Demo означают открытие потокового аудио и сами по себе не являются ошибкой.
+
+## Быстрый запуск из исходников
 
 Рекомендуется Windows 10/11 и актуальная версия Python 3.
 
@@ -132,6 +375,12 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
+Для наиболее чистого поиска YouTube Music установите дополнительную зависимость, если она вынесена в отдельный файл проекта:
+
+```powershell
+python -m pip install -r requirements-youtube-music.txt
+```
+
 Основные зависимости:
 
 - `PySide6`;
@@ -139,31 +388,69 @@ python main.py
 - `yt-dlp`;
 - `pypresence`;
 - `keyboard`;
-- `requests`.
+- `requests`;
+- `ytmusicapi` для каталожного поиска YouTube Music.
 
-Файл `ffmpeg.exe` уже находится в корне проекта. Другой путь можно указать через переменную окружения `CLOUDPLAYER_FFMPEG`.
+`ffmpeg.exe` находится в корне проекта. Другой путь можно указать через переменную окружения:
 
-### Сборка автообновления
+```text
+CLOUDPLAYER_FFMPEG
+```
 
-Автоматическая установка работает в собранной Windows-версии. `CloudPlayer.exe` должен быть самодостаточной one-file сборкой, поскольку updater заменяет именно этот файл. Соберите отдельный updater:
+## Первый запуск и базовое использование
+
+1. Запустите `CloudPlayer.exe` или `python main.py`.
+2. Создайте плейлист через интерфейс или `Ctrl+N`.
+3. Откройте плейлист.
+4. Нажмите **Add Song** или клавишу `Alt`.
+5. Введите запрос.
+6. При необходимости откройте фильтр и включите YouTube Music.
+7. Нажмите **Search**.
+8. Выберите результат стрелками.
+9. Нажмите `Space`, чтобы прослушать Demo.
+10. Нажмите `Enter`, чтобы скачать выбранный трек.
+11. Для нескольких треков используйте `Ctrl+↑` / `Ctrl+↓`, затем `Enter`.
+12. После загрузки трек появится в текущем плейлисте.
+
+Для локального файла используйте **Add Local File**. Для ссылки используйте **Add From URL**.
+
+## Сборка автообновления
+
+Автоматическая установка работает в собранной Windows-версии. `CloudPlayer.exe` должен быть самодостаточной one-file сборкой, поскольку updater заменяет именно этот файл.
 
 ```powershell
 python -m pip install -r requirements-build.txt
 python -m PyInstaller --clean --noconfirm CloudPlayerUpdater.spec
 ```
 
-В каждый GitHub Release необходимо загрузить два asset-файла с точными именами:
+В каждый GitHub Release нужно загрузить два asset-файла с точными именами:
 
 - `CloudPlayer.exe`;
 - `CloudPlayerUpdater.exe`.
 
-Переход с версии, в которой ещё нет этого механизма, на первую сборку с updater выполняется один раз вручную. После её установки последующие обновления поддерживают автоматическую замену и перезапуск.
+GitHub должен предоставить SHA-256 digest для обоих файлов.
 
-GitHub должен предоставить SHA-256 digest для обоих файлов. После загрузки пользователь получает диалог `Update and Restart`. Updater ждёт закрытия процесса, сохраняет текущий файл как `CloudPlayer.exe.old`, устанавливает новую сборку и запускает её с одноразовым token. После появления главного окна новая версия подтверждает запуск. Если процесс завершится до подтверждения, updater восстановит старый `.exe`. Журнал находится в `Documents/CloudPlayer/update.log`.
+Процесс обновления:
 
-### Настройка интеграций
+1. CloudPlayer скачивает и проверяет файлы.
+2. Пользователь подтверждает `Update and Restart`.
+3. Updater ждёт полного закрытия CloudPlayer.
+4. Текущий файл сохраняется как `CloudPlayer.exe.old`.
+5. Новая версия устанавливается и запускается с одноразовым token.
+6. После появления главного окна новая версия подтверждает успешный запуск.
+7. Если новая версия завершится слишком рано, updater восстановит старую.
 
-Локальные плейлисты и воспроизведение работают без внешних API-ключей. Для дополнительных функций скопируйте `keys.example.json` в `keys.json` и заполните только нужные значения:
+Журнал:
+
+```text
+Documents/CloudPlayer/update.log
+```
+
+## Настройка интеграций
+
+Локальные плейлисты и воспроизведение работают без внешних API-ключей.
+
+Для дополнительных функций скопируйте:
 
 ```powershell
 Copy-Item keys.example.json keys.json
@@ -173,7 +460,7 @@ Copy-Item keys.example.json keys.json
 | --- | --- |
 | `genius_client_id` | Genius API client ID |
 | `genius_client_secret` | Genius API client secret |
-| `genius_access_token` | Получение текстов песен через Genius |
+| `genius_access_token` | Получение текстов песен |
 | `discord_client_id` | Discord Rich Presence |
 | `supabase_url` | URL проекта Supabase |
 | `supabase_api_key` | Публичный/anon ключ Supabase |
@@ -181,22 +468,29 @@ Copy-Item keys.example.json keys.json
 | `turnstile_site_key` | Публичный ключ Cloudflare Turnstile |
 | `turnstile_secret_key` | Серверная проверка Turnstile |
 | `turnstile_verify_url` | Endpoint проверки Turnstile |
-| `turn_urls` | Список TURN URL |
+| `turn_urls` | TURN URL |
 | `turn_username` | Имя пользователя TURN |
 | `turn_password` | Пароль TURN |
 
-Вместо `keys.json` можно использовать переменные окружения, перечисленные в `config.py`. Путь к другому файлу ключей задаётся через `CLOUDPLAYER_KEYS_FILE`.
+Вместо `keys.json` можно использовать переменные окружения из `config.py`.
 
-`keys.json` добавлен в `.gitignore`. Не публикуйте секретные ключи. В публичной desktop-сборке нельзя безопасно хранить Supabase service-role/admin key: для production вынесите административные операции на доверенный backend или Supabase RPC/Edge Function.
+Другой файл ключей:
 
-### Где хранятся данные
+```text
+CLOUDPLAYER_KEYS_FILE
+```
 
-CloudPlayer создаёт каталог:
+`keys.json` должен находиться в `.gitignore`.
+
+Не публикуйте секретные ключи. Supabase service-role/admin key нельзя безопасно хранить в публичной desktop-сборке. Для production административные операции следует вынести на доверенный backend, RPC или Edge Function.
+
+## Где хранятся данные
 
 ```text
 Documents/CloudPlayer/
 ├── account.json
 ├── settings.json
+├── binds.cfg
 ├── update_state.json
 ├── update.log
 ├── downloads/
@@ -207,161 +501,416 @@ Documents/CloudPlayer/
 │   └── Playlist Name/
 │       └── songs/
 └── temp/
-    └── lyrics/
+    ├── lyrics/
+    └── preview/
 ```
 
-- `settings.json` хранит accent-цвет, громкость и состояние Debug Console.
-- `account.json` хранит локальную сессию аккаунта.
-- `playlists` содержит аудиофайлы, обложки, sidecar-метаданные и порядок треков.
-- `downloads` содержит проверенные файлы `CloudPlayer.update.exe` и `CloudPlayerUpdater.exe`; имя asset-файла в GitHub Release остаётся `CloudPlayer.exe`.
-- `update.log` содержит журнал установки и отката обновлений.
-- `temp/lyrics` содержит кеш текстов песен и временные файлы.
+- `settings.json` — accent-цвет, громкость, Debug Console, источники поиска и другие параметры.
+- `binds.cfg` — пользовательские сочетания клавиш.
+- `account.json` — локальная сессия.
+- `playlists` — аудио, обложки, метаданные и порядок треков.
+- `downloads` — проверенные файлы обновления.
+- `update.log` — журнал обновления и отката.
+- `temp/lyrics` — кеш текстов.
+- `temp/preview` — временные данные Demo, очищаемые приложением.
 
-Удаление плейлиста или трека из интерфейса удаляет соответствующие локальные файлы.
+Удаление трека или плейлиста через интерфейс удаляет соответствующие локальные файлы.
 
-### Управление
+## Возможные проблемы
 
-| Действие | Управление |
-| --- | --- |
-| Воспроизвести трек | Двойной клик по треку или `Play` в контекстном меню |
-| Изменить порядок плейлиста | Перетащить трек в списке |
-| Отменить перестановку | `Ctrl+Z` внутри плейлиста |
-| Изменить очередь | Открыть очередь и перетащить строку |
-| Предыдущий трек | `F7` или media key Previous |
-| Play/Pause | `F8` или media key Play/Pause |
-| Следующий трек | `F9` или media key Next |
-| Точная громкость | Нажать кнопку с процентом громкости |
-| Перетащить диалог | Потянуть за его верхний header |
-| Закрыть диалог | Нажать кнопку с `exit.svg` или затемнённый фон |
+### Не работает скачивание
 
-### Возможные проблемы
+Проверьте:
 
-- Если загрузка или преобразование трека не работает, проверьте доступность FFmpeg и `yt-dlp`.
-- Если тексты не загружаются, проверьте параметры Genius в `keys.json` или переменных окружения.
-- Если Discord Rich Presence отсутствует, проверьте `discord_client_id` и запущенный Discord-клиент.
-- Если глобальные клавиши заняты другим приложением, Windows может отказать в их регистрации.
-- Если участники не могут подключиться к комнате, проверьте адрес, порт, firewall, port forwarding и TURN-конфигурацию.
-- Если облачная синхронизация недоступна, проверьте Supabase и Cloudflare Turnstile.
+- доступность интернета;
+- актуальность `yt-dlp`;
+- наличие FFmpeg;
+- путь `CLOUDPLAYER_FFMPEG`;
+- доступность SoundCloud или YouTube Music.
+
+### YouTube Music показывает мало результатов
+
+Установите `ytmusicapi` или файл `requirements-youtube-music.txt`. Без него CloudPlayer может использовать резервный поиск через `yt-dlp`, который менее точен.
+
+### Demo долго запускается
+
+Причины могут быть связаны с:
+
+- медленным соединением;
+- HLS-потоком SoundCloud;
+- временной задержкой получения прямой ссылки;
+- блокировкой источника;
+- работой FFmpeg backend.
+
+Demo использует прогрессивную буферизацию и начинает воспроизведение после накопления стартового фрагмента.
+
+### В Debug Console много строк FFmpeg
+
+Сообщения о `hls`, `aac`, `mp3`, `Input #0`, `data000.m4s` обычно являются информационными. Ошибкой следует считать сообщения, после которых Demo или воспроизведение действительно не запускается.
+
+### Нет текстов песен
+
+Проверьте Genius-параметры в `keys.json` или переменных окружения.
+
+### Нет Discord Rich Presence
+
+Проверьте:
+
+- `discord_client_id`;
+- запущен ли Discord;
+- разрешена ли активность приложений в Discord.
+
+### Не работают глобальные клавиши
+
+Windows может отказать в регистрации сочетания, если его уже использует другое приложение. На некоторых клавиатурах F-клавиши требуют переключения Fn Lock.
+
+### Не подключается Listen Together
+
+Проверьте:
+
+- адрес;
+- порт;
+- firewall;
+- port forwarding;
+- TURN-конфигурацию.
+
+### Не работает облачная синхронизация
+
+Проверьте Supabase и Cloudflare Turnstile.
 
 ---
 
-## English
+# English
 
-### Features
+## About
 
-#### Library and playlists
+CloudPlayer is a Windows desktop music player that combines a local library with SoundCloud and YouTube Music search, preview streaming, keyboard-first navigation, lyrics, cloud synchronization and synchronized listening rooms.
+
+An account is not required for local playlists, local files or ordinary playback.
+
+## Main features
+
+### Library and playlists
 
 - Create, open, rename and remove playlists.
-- Set a custom playlist cover or restore the automatically detected cover.
+- Set a custom playlist cover.
+- Restore an automatically detected cover.
 - Select multiple playlists and tracks.
 - Reorder tracks with drag and drop.
-- Undo the latest playlist reorder with `Ctrl+Z`.
-- Automatically persist playlist order and metadata.
-- Keep music playing after leaving a playlist or opening another playlist.
-- Stop playback when the currently playing track or its playlist is deleted.
+- Undo the latest reorder with `Ctrl+Z`.
+- Persist playlist order and metadata automatically.
+- Keep music playing after leaving a playlist.
+- Stop safely when the playing track or playlist is deleted.
+- Run context actions on one or multiple selected tracks.
 
-#### Adding and discovering music
+### Add Song: SoundCloud and YouTube Music
 
-- Search SoundCloud from the home screen.
-- Search SoundCloud inside the `Add Song` dialog.
-- Download one or multiple selected results.
-- Add a track from a complete SoundCloud URL.
+The **Add Song** dialog supports:
+
+- **SoundCloud**;
+- **YouTube Music**.
+
+SoundCloud is enabled by default. Use the `filter.svg` button to change sources.
+
+The source menu:
+
+- marks enabled sources with `check.svg`;
+- allows one or both sources;
+- does not allow all sources to be disabled;
+- saves the latest selection in `Documents/CloudPlayer/settings.json`.
+
+YouTube Music uses a songs-focused search instead of ordinary YouTube results. CloudPlayer also:
+
+- removes exact duplicates;
+- ranks stronger title and artist matches higher;
+- lowers `slowed`, `reverb`, `nightcore`, `karaoke`, `cover`, `remix`, `sped up` and similar variants unless the query requests them;
+- labels results as `SC` or `YTM`;
+- merges both providers into one result list.
+
+### Demo preview
+
+Each search result includes a white **Demo** label and a `play.svg` / `pause.svg` button.
+
+Demo preview:
+
+- does not add the track to the library;
+- starts before downloading;
+- uses a small startup buffer;
+- keeps downloading in chunks while playing;
+- supports progressive and HLS sources;
+- stops the previous preview when another result starts;
+- cancels when Add Song closes or a new search begins;
+- follows the main player volume;
+- follows the main mute state;
+- reacts immediately to volume changes.
+
+Keyboard controls in the result list:
+
+- `Up` / `Down` — move through results;
+- `Space` — play or pause Demo;
+- `Enter` — download the selected result;
+- `Ctrl+Up` / `Ctrl+Down` — extend multi-selection;
+- `Enter` downloads all selected results.
+
+### Other ways to add music
+
+- Add a complete SoundCloud URL.
+- Add a complete YouTube or YouTube Music URL.
 - Add local audio files.
-- Download in the background with progress reporting.
-- Use `yt-dlp` and FFmpeg for audio retrieval and conversion.
-- Browse recommendations and add a recommended track directly to a playlist.
+- Download in the background with progress.
+- Retrieve and convert audio through `yt-dlp` and FFmpeg.
+- Add recommendations directly to a playlist.
 
-Supported local formats: `.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`, `.opus` and `.webm`.
+Supported local formats:
 
-#### Track management
+```text
+.mp3  .wav  .m4a  .flac  .ogg  .opus  .webm
+```
+
+## Track management
 
 The track context menu can:
 
 - start playback;
 - rename a track;
-- duplicate a track together with its metadata and cover sidecars;
-- delete one or multiple tracks;
-- display and copy the file path.
+- duplicate a track with metadata and cover sidecars;
+- remove one or multiple tracks;
+- show and copy the file path.
 
-The cover context menu can open the image at full size, save it to a file or copy it to the clipboard. In the full-size viewer, the mouse wheel smoothly zooms toward the cursor and dragging pans the image.
+The cover context menu can:
 
-#### Player
+- open the image at full size;
+- save it;
+- copy it;
+- zoom smoothly with the mouse wheel;
+- pan by dragging.
 
-- Play/Pause, previous and next controls.
-- Click or drag on the timeline to seek.
-- Current time, duration and network-buffer progress.
-- Slider-based or exact numeric volume control.
-- Quick mute and unmute with smooth audio fading, volume restoration and an animated slash.
-- Persisted volume between launches.
-- Repeat with a smooth animated state slash.
-- Shuffle with a stable randomized queue.
-- Automatic transition to the next track when playback ends.
-- Track title, artist, cover and lyrics display.
+## Player
+
+- Play/Pause.
+- Previous and next.
+- Click or drag the timeline to seek.
+- Current time, duration and network buffer progress.
+- Slider or exact numeric volume.
+- Smooth mute and unmute.
+- Persisted volume.
+- Repeat.
+- Stable shuffle queue.
+- Automatic transition to the next track.
+- Title, artist, cover and lyrics.
 - Genius lyrics retrieval and local caching.
 
-#### Queue
+## Queue
 
-- The queue button is the first playback control.
-- Displays the next five tracks.
-- Supports normal order, Shuffle Mode and Listen Together queues.
-- Tracks can be reordered with drag and drop in normal and shuffle modes.
-- Queue changes do not rewrite the saved playlist order.
+- Queue is the first playback control.
+- Shows the next five tracks.
+- Supports normal order, Shuffle Mode and Listen Together.
+- Allows drag-and-drop reordering.
+- Does not rewrite the saved playlist order.
 
-#### Listen Together
+## Listen Together
 
-- Host a room or connect with an address and port.
+- Host a room.
+- Join by address and port.
 - Domain, IPv4, IPv6 and full URL support.
-- Separate public and local server ports.
-- Synchronized play, pause, seek, repeat, selection and track skipping.
-- Transfer missing tracks between participants.
-- Adaptive network buffering with loaded progress on the timeline.
+- Separate public and local ports.
+- Synchronize play, pause, seek, repeat, selection and skipping.
+- Transfer missing tracks.
+- Adaptive buffering.
 - Resume interrupted transfers after reconnecting.
-- Room roster with participant country and latency.
-- Optional TURN server configuration.
+- Participant list with country and latency.
+- Optional TURN configuration.
 
-Hosting outside the local network may require forwarding the selected port on the router.
+Internet hosting may require firewall permission and port forwarding.
 
-#### Account and cloud synchronization
+## Account and cloud sync
 
-- Account sign-up and login.
-- Cloudflare Turnstile verification.
-- Persisted local account session.
-- Synchronize downloadable track links through Supabase.
+- Sign up and log in.
+- Cloudflare Turnstile.
+- Persisted local session.
+- Synchronize downloadable source links through Supabase.
 - Download synchronized tracks into a local playlist.
-- Remove individual tracks from cloud synchronization.
-- Log out or permanently delete the account.
+- Remove individual cloud entries.
+- Log out.
+- Permanently delete the account.
 
-Local files without an original downloadable URL are skipped during synchronization.
+Local files without a source URL are skipped during cloud synchronization.
 
-#### System controls and integrations
+## Keyboard-first control
 
-- Global `F7`, `F8`, `F9` shortcuts for previous, play/pause and next.
-- Hardware Previous, Play/Pause and Next media-key support.
-- Windows Thumbnail Toolbar under the taskbar preview.
-- Previous, Play/Pause and Next Thumbnail Toolbar buttons.
-- Discord Rich Presence with track, artist, cover and paused state.
-- GitHub Releases update checks.
-- Size and SHA-256 verification before an update is saved.
-- Installation through a separate updater after CloudPlayer has fully exited.
-- Automatic restart, startup confirmation and rollback when the new version exits early.
+CloudPlayer supports keyboard navigation across most of the interface.
 
-Thumbnail Toolbar is available only on Windows. Global media keys use the native Win32 backend first and the `keyboard` package as a fallback.
+The focus indicator:
 
-#### Interface
+- remains hidden while using the mouse;
+- appears when keyboard navigation begins;
+- hides after clicking, double-clicking, scrolling or touching.
 
-- Application dialogs open as centered overlays; selecting and saving files uses the native system file picker.
-- Dedicated top header with the dialog title and `exit.svg` button.
-- Drag dialogs by their header while keeping them inside the application.
-- Smooth fade animations without an artificial frame-rate limit.
-- The same inertial scrolling behavior in lists and text areas.
-- Styled vertical and horizontal scrollbars without native arrow buttons.
-- Configurable primary accent color.
-- The settings `check.svg` mark draws smoothly from left to right and disappears in reverse.
-- Optional Debug Console with stdout, stderr, warnings, Python/Qt logs and uncaught exceptions.
-- GitHub and Telegram links are displayed in an internal menu and can be copied.
-- The support button displays the donation address and lets you copy it.
+CloudPlayer keeps the native Qt `Tab` focus order.
 
-### Quick start
+### Navigation
+
+| Action | Key |
+| --- | --- |
+| Next control or section | `Tab` |
+| Previous control or section | `Shift+Tab` |
+| Navigate inside a list or menu | Arrow keys |
+| Activate | `Enter` |
+| Close, cancel or go back from a popup | `Esc` |
+| Return to the previous screen | `Backspace` |
+| First list item | `Home` |
+| Last list item | `End` |
+| Fast scroll up | `PageUp` |
+| Fast scroll down | `PageDown` |
+
+### Confirmation dialogs
+
+| Action | Key |
+| --- | --- |
+| Yes / OK / confirm | `Enter` |
+| No / Cancel | `Esc` |
+
+This behavior does not depend on which button currently owns visual focus.
+
+### Context menus
+
+| Action | Key |
+| --- | --- |
+| Open the selected item's context menu | single `Right Ctrl` |
+| Fallback context menu shortcut | `Shift+F10` |
+| Move through menu items | `Up` / `Down` |
+| Run the selected command | `Enter` |
+| Close the menu | `Esc` |
+
+A standalone `Fn` press is usually not exposed to Windows applications, so Right Ctrl is the primary context-menu key.
+
+### Playlists and library
+
+| Action | Key |
+| --- | --- |
+| Open Add Song in the current playlist | `Alt` |
+| Focus the Add Song search field | automatic after `Alt` |
+| Create a playlist | `Ctrl+N` |
+| Focus search | `Ctrl+F` |
+| Select all in a supported list | `Ctrl+A` |
+| Delete selected tracks or playlists | `Delete` |
+| Undo the latest reorder | `Ctrl+Z` |
+| Play the selected track | `Ctrl+Enter` |
+| Queue the selected track next | `Shift+Enter` |
+| Extend selection downward | `Ctrl+Down` |
+| Extend selection upward | `Ctrl+Up` |
+
+`Ctrl+Up` and `Ctrl+Down` work in playlist track lists and Add Song search results.
+
+### Playback
+
+| Action | Key |
+| --- | --- |
+| Toggle Repeat | `F5` |
+| Toggle Shuffle | `F6` |
+| Previous track | `F7` |
+| Play/Pause | `F8` |
+| Next track | `F9` |
+| Mute/Unmute | `F10` |
+| Volume down | `F11` |
+| Volume up | `F12` |
+| Play/Pause inside CloudPlayer | `Space` |
+
+`Space` is not intercepted while typing. In Add Song results it controls Demo preview.
+
+Compact keyboards may require `Fn+F5` through `Fn+F12`. CloudPlayer receives the final F-key event; Fn behavior depends on the keyboard.
+
+### Quick sections
+
+| Section | Key |
+| --- | --- |
+| Home / library | `Ctrl+1` |
+| Playlists | `Ctrl+2` |
+| Search | `Ctrl+3` |
+| Queue | `Ctrl+4` |
+| Listen Together | `Ctrl+5` |
+| Settings | `Ctrl+6` |
+| Current track | `Ctrl+0` |
+
+### Global media keys
+
+Windows global controls:
+
+- `F7` — previous;
+- `F8` — Play/Pause;
+- `F9` — next;
+- hardware Previous, Play/Pause and Next keys.
+
+The native Win32 backend is used first, with the `keyboard` package as fallback.
+
+## Custom key bindings
+
+Bindings are stored at:
+
+```text
+Documents/CloudPlayer/binds.cfg
+```
+
+CloudPlayer creates the file automatically when it is missing.
+
+The **Keyboard** section in Settings:
+
+- shows the file path;
+- can reset bindings;
+- writes the reset only after **Save**;
+- leaves the file unchanged after **Cancel**;
+- applies new defaults without restarting.
+
+Example:
+
+```ini
+focus_next = Tab
+focus_previous = Shift+Tab
+navigate_up = Up
+navigate_down = Down
+navigate_left = Left
+navigate_right = Right
+activate = Enter
+cancel = Escape
+
+context_menu = RightCtrl
+context_menu_fallback = Shift+F10
+
+repeat = F5
+shuffle = F6
+previous_track = F7
+play_pause = F8
+next_track = F9
+mute = F10
+volume_down = F11
+volume_up = F12
+
+playlist_add_song = Alt
+demo_selected = Space
+multi_select_up = Ctrl+Up
+multi_select_down = Ctrl+Down
+```
+
+The installed build may include more action names. Use **Reset Bindings** to regenerate the complete current template.
+
+## Interface
+
+- Centered in-app dialogs.
+- Native file picker for file selection and saving.
+- Dedicated dialog header and `exit.svg`.
+- Draggable dialogs constrained to the app window.
+- Smooth fade animations.
+- Inertial scrolling.
+- Styled scrollbars.
+- Configurable accent color.
+- Animated `check.svg`.
+- Optional Debug Console with stdout, stderr, Python logs, warnings, Qt logs and uncaught exceptions.
+- GitHub and Telegram links.
+- Support button with a copyable donation address.
+
+FFmpeg lines such as `Input #0`, `hls` or `data000.m4s` during Demo usually describe streaming activity and are not automatically errors.
+
+## Quick start from source
 
 Windows 10/11 and a current Python 3 release are recommended.
 
@@ -373,6 +922,12 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
+For the cleanest YouTube Music catalog search, install the optional dependency when the project keeps it in a separate file:
+
+```powershell
+python -m pip install -r requirements-youtube-music.txt
+```
+
 Main dependencies:
 
 - `PySide6`;
@@ -380,31 +935,67 @@ Main dependencies:
 - `yt-dlp`;
 - `pypresence`;
 - `keyboard`;
-- `requests`.
+- `requests`;
+- `ytmusicapi`.
 
-`ffmpeg.exe` is included in the project root. Set `CLOUDPLAYER_FFMPEG` to use a different executable.
+`ffmpeg.exe` is located in the project root. Use another executable through:
 
-### Building automatic updates
+```text
+CLOUDPLAYER_FFMPEG
+```
 
-Automatic installation is enabled in the packaged Windows application. `CloudPlayer.exe` must be a self-contained one-file build because the updater replaces that exact file. Build the separate updater with:
+## First-run workflow
+
+1. Start `CloudPlayer.exe` or `python main.py`.
+2. Create a playlist with the UI or `Ctrl+N`.
+3. Open the playlist.
+4. Press **Add Song** or `Alt`.
+5. Type a query.
+6. Enable YouTube Music through the filter when needed.
+7. Press **Search**.
+8. Select a result with the arrow keys.
+9. Press `Space` to preview it.
+10. Press `Enter` to download it.
+11. Use `Ctrl+Up` / `Ctrl+Down` and then `Enter` for multiple tracks.
+12. The downloaded tracks appear in the current playlist.
+
+Use **Add Local File** for local audio and **Add From URL** for a direct link.
+
+## Building automatic updates
+
+Automatic installation is available in the packaged Windows build. `CloudPlayer.exe` must be a self-contained one-file executable.
 
 ```powershell
 python -m pip install -r requirements-build.txt
 python -m PyInstaller --clean --noconfirm CloudPlayerUpdater.spec
 ```
 
-Upload two assets with these exact names to every GitHub Release:
+Upload these exact assets to every GitHub Release:
 
 - `CloudPlayer.exe`;
 - `CloudPlayerUpdater.exe`.
 
-Moving from a version that does not include this mechanism to the first updater-enabled build is a one-time manual update. After it is installed, later releases support automatic replacement and restart.
+GitHub must provide SHA-256 digests for both files.
 
-GitHub must provide a SHA-256 digest for both files. After downloading, the user receives an `Update and Restart` dialog. The updater waits for the running process to exit, saves it as `CloudPlayer.exe.old`, installs the new build and starts it with a one-time token. The new version confirms startup after its main window appears. If it exits before confirmation, the updater restores the previous executable. Logs are written to `Documents/CloudPlayer/update.log`.
+Update flow:
 
-### Integration configuration
+1. CloudPlayer downloads and verifies the files.
+2. The user confirms `Update and Restart`.
+3. The updater waits for CloudPlayer to exit.
+4. The previous executable is saved as `CloudPlayer.exe.old`.
+5. The new build is installed and started with a one-time token.
+6. The new version confirms startup after the main window appears.
+7. If it exits too early, the updater restores the previous build.
 
-Local playlists and playback do not require external API credentials. For optional integrations, copy `keys.example.json` to `keys.json` and fill only the values you need:
+Log file:
+
+```text
+Documents/CloudPlayer/update.log
+```
+
+## Integration configuration
+
+Local playlists and playback do not require external API credentials.
 
 ```powershell
 Copy-Item keys.example.json keys.json
@@ -414,30 +1005,37 @@ Copy-Item keys.example.json keys.json
 | --- | --- |
 | `genius_client_id` | Genius API client ID |
 | `genius_client_secret` | Genius API client secret |
-| `genius_access_token` | Genius lyrics retrieval |
+| `genius_access_token` | Genius lyrics |
 | `discord_client_id` | Discord Rich Presence |
 | `supabase_url` | Supabase project URL |
 | `supabase_api_key` | Supabase public/anon key |
 | `supabase_admin_api_key` | Administrative account operations |
-| `turnstile_site_key` | Cloudflare Turnstile public site key |
+| `turnstile_site_key` | Cloudflare Turnstile site key |
 | `turnstile_secret_key` | Server-side Turnstile verification |
 | `turnstile_verify_url` | Turnstile verification endpoint |
-| `turn_urls` | TURN URL list |
+| `turn_urls` | TURN URLs |
 | `turn_username` | TURN username |
 | `turn_password` | TURN password |
 
-Environment variables listed in `config.py` can be used instead of `keys.json`. Use `CLOUDPLAYER_KEYS_FILE` to select another credentials file.
+Environment variables from `config.py` can be used instead of `keys.json`.
 
-`keys.json` is included in `.gitignore`. Never publish secret credentials. A Supabase service-role/admin key cannot be stored safely in a public desktop build; move administrative operations to a trusted backend or Supabase RPC/Edge Function for production.
+Alternative credentials file:
 
-### Data locations
+```text
+CLOUDPLAYER_KEYS_FILE
+```
 
-CloudPlayer creates the following directory:
+Keep `keys.json` in `.gitignore`.
+
+Never publish secret credentials. A Supabase service-role/admin key cannot be stored safely in a public desktop build. Move administrative operations to a trusted backend, RPC or Edge Function for production.
+
+## Data locations
 
 ```text
 Documents/CloudPlayer/
 ├── account.json
 ├── settings.json
+├── binds.cfg
 ├── update_state.json
 ├── update.log
 ├── downloads/
@@ -448,42 +1046,83 @@ Documents/CloudPlayer/
 │   └── Playlist Name/
 │       └── songs/
 └── temp/
-    └── lyrics/
+    ├── lyrics/
+    └── preview/
 ```
 
-- `settings.json` stores the accent color, volume and Debug Console state.
-- `account.json` stores the local account session.
-- `playlists` contains audio files, covers, sidecar metadata and track order.
-- `downloads` contains the verified `CloudPlayer.update.exe` and `CloudPlayerUpdater.exe` files; the GitHub Release asset remains named `CloudPlayer.exe`.
-- `update.log` contains update installation and rollback events.
-- `temp/lyrics` contains cached lyrics and temporary files.
+- `settings.json` — accent color, volume, Debug Console state, search sources and other settings.
+- `binds.cfg` — custom key bindings.
+- `account.json` — local account session.
+- `playlists` — audio, covers, metadata and saved track order.
+- `downloads` — verified updater files.
+- `update.log` — update and rollback events.
+- `temp/lyrics` — lyrics cache.
+- `temp/preview` — temporary Demo data cleared by the application.
 
-Removing a playlist or track through the interface deletes its corresponding local files.
+Removing a track or playlist from the UI removes its local files.
 
-### Controls
+## Troubleshooting
 
-| Action | Control |
-| --- | --- |
-| Play a track | Double-click it or choose `Play` from its context menu |
-| Reorder a playlist | Drag a track in the playlist |
-| Undo a reorder | Press `Ctrl+Z` inside the playlist |
-| Reorder the queue | Open the queue and drag a row |
-| Previous track | `F7` or the Previous media key |
-| Play/Pause | `F8` or the Play/Pause media key |
-| Next track | `F9` or the Next media key |
-| Exact volume | Click the volume percentage button |
-| Move a dialog | Drag its top header |
-| Close a dialog | Click `exit.svg` or the dimmed backdrop |
+### Downloads fail
 
-### Troubleshooting
+Check:
 
-- If downloading or conversion fails, verify that FFmpeg and `yt-dlp` are available.
-- If lyrics do not load, verify the Genius settings in `keys.json` or the environment.
-- If Discord Rich Presence is missing, verify `discord_client_id` and make sure the Discord client is running.
-- Windows can reject global shortcuts when another application has already registered them.
-- If participants cannot join a room, verify the address, port, firewall, port forwarding and TURN configuration.
-- If cloud synchronization is unavailable, verify the Supabase and Cloudflare Turnstile configuration.
+- internet access;
+- current `yt-dlp`;
+- FFmpeg availability;
+- `CLOUDPLAYER_FFMPEG`;
+- SoundCloud or YouTube Music availability.
+
+### YouTube Music returns too few results
+
+Install `ytmusicapi` or `requirements-youtube-music.txt`. Without it, CloudPlayer may use a less precise `yt-dlp` fallback.
+
+### Demo starts slowly
+
+Possible causes:
+
+- slow internet;
+- SoundCloud HLS startup;
+- delay while resolving the direct media URL;
+- source throttling;
+- FFmpeg backend startup.
+
+Demo uses progressive buffering and begins after a small startup fragment is available.
+
+### Debug Console shows many FFmpeg lines
+
+Messages containing `hls`, `aac`, `mp3`, `Input #0` or `data000.m4s` are often informational. Treat them as an error only when preview or playback actually fails.
+
+### Lyrics are unavailable
+
+Verify Genius settings in `keys.json` or environment variables.
+
+### Discord Rich Presence is unavailable
+
+Verify:
+
+- `discord_client_id`;
+- that Discord is running;
+- that activity sharing is enabled.
+
+### Global shortcuts do not work
+
+Windows may reject a shortcut already registered by another application. Some keyboards also require Fn Lock for ordinary F-key behavior.
+
+### Listen Together cannot connect
+
+Verify:
+
+- address;
+- port;
+- firewall;
+- port forwarding;
+- TURN configuration.
+
+### Cloud sync is unavailable
+
+Verify Supabase and Cloudflare Turnstile.
 
 ## Author
 
-FinchProffe · 2025
+FinchProffe · 2026

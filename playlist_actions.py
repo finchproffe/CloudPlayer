@@ -55,6 +55,63 @@ class PlaylistActionsMixin:
                 playlist_name, dialog.downloaded_paths
             )
 
+    def delete_selected_tracks(self, items=None):
+        items = list(items or self.songs_list.selectedItems())
+        if not items and self.songs_list.currentItem() is not None:
+            items = [self.songs_list.currentItem()]
+        items = [item for item in items if item.data(Qt.UserRole)]
+        if not items or not self.current_playlist_path:
+            return False
+
+        paths = [
+            self.current_playlist_path / item.data(Qt.UserRole)
+            for item in items
+        ]
+        count = len(paths)
+        prompt = (
+            f"Delete {paths[0].name}? Its synchronized copy in this "
+            "playlist will also be removed if present."
+            if count == 1
+            else f"Delete {count} selected tracks? Their synchronized "
+            "copies in this playlist will also be removed if present."
+        )
+        if QMessageBox.question(self, "Delete", prompt) != QMessageBox.Yes:
+            return True
+
+        failures = []
+        deleted = []
+        deleted_urls = []
+        for selected_path in paths:
+            deleted_name = selected_path.name
+            source_url = str(
+                self._track_descriptor(selected_path).get("source_url")
+                or ""
+            ).strip()
+            self.release_track(selected_path)
+            try:
+                self._unlink_track(selected_path)
+                self._delete_sidecars(selected_path)
+            except OSError as exc:
+                failures.append(f"{deleted_name}: {exc}")
+                continue
+            deleted.append(deleted_name)
+            if source_url.startswith(("http://", "https://")):
+                deleted_urls.append(source_url)
+        self._remove_songs_from_order(deleted)
+        self.playlist_updated.emit(self.current_playlist)
+        if deleted:
+            self.tracks_deleted.emit(
+                str(self.current_playlist or ""), deleted_urls
+            )
+        if failures:
+            QMessageBox.critical(
+                self,
+                "Delete Track",
+                "Some tracks could not be deleted:\n"
+                + "\n".join(failures[:3]),
+            )
+        return True
+
     def _track_menu(self, position):
         item = self.songs_list.itemAt(position)
         if not item:
@@ -191,52 +248,7 @@ class PlaylistActionsMixin:
                     + "\n".join(failures[:3]),
                 )
         elif chosen is delete:
-            count = len(paths)
-            prompt = (
-                f"Delete {paths[0].name}? Its synchronized copy in this "
-                "playlist will also be removed if present."
-                if count == 1
-                else f"Delete {count} selected tracks? Their synchronized "
-                "copies in this playlist will also be removed if present."
-            )
-            if (
-                QMessageBox.question(
-                    self, "Delete", prompt
-                )
-                == QMessageBox.Yes
-            ):
-                failures = []
-                deleted = []
-                deleted_urls = []
-                for selected_path in paths:
-                    deleted_name = selected_path.name
-                    source_url = str(
-                        self._track_descriptor(selected_path).get("source_url")
-                        or ""
-                    ).strip()
-                    self.release_track(selected_path)
-                    try:
-                        self._unlink_track(selected_path)
-                        self._delete_sidecars(selected_path)
-                    except OSError as exc:
-                        failures.append(f"{deleted_name}: {exc}")
-                        continue
-                    deleted.append(deleted_name)
-                    if source_url.startswith(("http://", "https://")):
-                        deleted_urls.append(source_url)
-                self._remove_songs_from_order(deleted)
-                self.playlist_updated.emit(self.current_playlist)
-                if deleted:
-                    self.tracks_deleted.emit(
-                        str(self.current_playlist or ""), deleted_urls
-                    )
-                if failures:
-                    QMessageBox.critical(
-                        self,
-                        "Delete Track",
-                        "Some tracks could not be deleted:\n"
-                        + "\n".join(failures[:3]),
-                    )
+            self.delete_selected_tracks(items)
         elif chosen is folder:
             path_menu = make_menu(self)
             location = path_menu.addAction(str(path))

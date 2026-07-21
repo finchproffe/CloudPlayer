@@ -1,0 +1,3 @@
+# Optional: enables native YouTube Music catalogue search.
+# Without it CloudPlayer falls back to yt-dlp YouTube music ranking.
+ytmusicapi>=1.8,<2

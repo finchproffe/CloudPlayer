@@ -46,7 +46,11 @@ from app_updater import (
 from ui_polish import polish_tree
 from font_config import setup_application_fonts
 from group_sessions import GroupSessionWidget
-from hotkeys import GlobalHotkeyThread
+from hotkeys import (
+    GlobalHotkeyThread,
+    HotkeyBindings,
+    KeyboardNavigationController,
+)
 from network_sync_manager import NetworkSyncManager
 from player_widgets import PlaylistView
 from playlist_index import flush_playlist_writes
@@ -363,14 +367,60 @@ class MusicPlayer(
         self._animation = animation
         animation.start()
         polish_tree(target)
+        keyboard_navigation = getattr(
+            self, "keyboard_navigation", None
+        )
+        if keyboard_navigation is not None:
+            QTimer.singleShot(
+                0, keyboard_navigation.focus_current_page
+            )
+
+    def _create_global_hotkey_thread(self):
+        thread = GlobalHotkeyThread(
+            self,
+            self.hotkey_bindings,
+        )
+        thread.play_pause.connect(self.playlist_view.toggle_playback)
+        thread.previous.connect(self.playlist_view.play_prev_track)
+        thread.next.connect(self.playlist_view.play_next_track)
+        thread.mute.connect(self.playlist_view.toggle_mute)
+        thread.volume_down.connect(
+            lambda: self._adjust_hotkey_volume(-5)
+        )
+        thread.volume_up.connect(
+            lambda: self._adjust_hotkey_volume(5)
+        )
+        return thread
 
     def _start_hotkeys(self):
-        self.hotkeys = GlobalHotkeyThread(self)
-        self.hotkeys.play_pause.connect(self.playlist_view.toggle_playback)
-        self.hotkeys.previous.connect(self.playlist_view.play_prev_track)
-        self.hotkeys.next.connect(self.playlist_view.play_next_track)
+        self.hotkey_bindings = HotkeyBindings()
+        self.keyboard_navigation = KeyboardNavigationController(
+            self,
+            self.hotkey_bindings,
+            self,
+        )
+        self.hotkeys = self._create_global_hotkey_thread()
         self.hotkeys.start()
 
+    def _restart_global_hotkeys(self):
+        previous = getattr(self, "hotkeys", None)
+        if previous is not None:
+            previous.stop()
+            if not previous.wait(1500):
+                return False
+        self.hotkey_bindings.reload()
+        self.hotkeys = self._create_global_hotkey_thread()
+        self.hotkeys.start()
+        return True
+
+    def _reset_keyboard_bindings(self):
+        if not self.hotkey_bindings.reset_to_defaults():
+            return False
+        return self._restart_global_hotkeys()
+
+    def _adjust_hotkey_volume(self, delta):
+        slider = self.playlist_view.volume_slider
+        slider.setValue(max(0, min(100, slider.value() + int(delta))))
 
 
     @asyncClose
@@ -410,6 +460,11 @@ class MusicPlayer(
             loader.requestInterruption()
             loader.wait(1000)
         flush_playlist_writes()
+        keyboard_navigation = getattr(
+            self, "keyboard_navigation", None
+        )
+        if keyboard_navigation is not None:
+            keyboard_navigation.stop()
         self.hotkeys.stop()
         self.hotkeys.wait(1000)
         if self.release_checker and self.release_checker.isRunning():

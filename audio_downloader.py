@@ -23,6 +23,32 @@ from worker_http import (
 
 _DOWNLOAD_LOCK = threading.Lock()
 
+
+
+def _detect_source(info, requested):
+    extractor = str(
+        info.get("extractor_key") or info.get("extractor") or ""
+    ).casefold()
+    url = str(
+        info.get("webpage_url")
+        or info.get("original_url")
+        or requested
+        or ""
+    ).casefold()
+    if "youtube" in extractor or "youtu.be" in url or "youtube.com" in url:
+        return "YouTube Music"
+    if "soundcloud" in extractor or "soundcloud.com" in url:
+        return "SoundCloud"
+    return str(info.get("extractor_key") or "Music")
+
+
+def _clean_download_artist(metadata):
+    artist = str(metadata.get("artist") or "Unknown Artist").strip()
+    if artist.casefold().endswith(" - topic"):
+        artist = artist[:-8].rstrip()
+    metadata["artist"] = artist or "Unknown Artist"
+    return metadata
+
 def _direct_http_audio_format(info):
 
     candidates = []
@@ -366,7 +392,7 @@ class BackgroundDownloader(QThread):
                         self.download_mode = f"parallel-range-{connections}"
                         self.parallel_connections = connections
                         print(
-                            "[SoundCloud Download] "
+                            "[Music Download] "
                             f"{connections} parallel connections, "
                             f"{total / (1024 * 1024):.1f} MiB at "
                             f"{self.download_mib_per_second:.1f} MiB/s"
@@ -380,11 +406,11 @@ class BackgroundDownloader(QThread):
                                     cover
                                 )
                             except OSError as exc:
-                                print(f"[SoundCloud Cover] {exc}")
+                                print(f"[Music Cover] {exc}")
                     except Exception as exc:
                         temporary.unlink(missing_ok=True)
                         print(
-                            "[SoundCloud Download] Parallel Range fallback: "
+                            "[Music Download] Parallel Range fallback: "
                             f"{exc}"
                         )
 
@@ -426,14 +452,15 @@ class BackgroundDownloader(QThread):
                     or (info or {}).get("original_url")
                     or requested
                 )
-                metadata = extract_sc_meta(info or {})
+                source_name = _detect_source(info or {}, requested)
+                metadata = _clean_download_artist(extract_sc_meta(info or {}))
                 metadata.update({
-                    "source": "SoundCloud",
+                    "source": source_name,
                     "source_url": source_url,
                     "download_url": source_url,
                     "source_id": (info or {}).get("id") or "",
                     "extractor": (
-                        (info or {}).get("extractor_key") or "SoundCloud"
+                        (info or {}).get("extractor_key") or source_name
                     ),
                     "download_mode": self.download_mode,
                     "parallel_connections": self.parallel_connections,

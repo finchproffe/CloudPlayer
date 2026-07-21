@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from config import ACCENT_COLOR, BG_COLOR, BUTTON_BORDER, PANEL_BG, TEXT_COLOR, TEXT_MUTED
 from dropdown_ui import QDialog
+from hotkeys import handle_list_multi_selection
 from smooth_scroll import SmoothScrollArea
 from utils import rounded_cover_pixmap
 
@@ -49,6 +50,11 @@ class BoundedSongList(QListWidget):
         self._auto_scroll_timer.setTimerType(Qt.PreciseTimer)
         self._auto_scroll_timer.setInterval(0)
         self._auto_scroll_timer.timeout.connect(self._auto_scroll_tick)
+
+    def keyPressEvent(self, event):
+        if handle_list_multi_selection(self, event):
+            return
+        super().keyPressEvent(event)
 
     def order(self):
         return [
